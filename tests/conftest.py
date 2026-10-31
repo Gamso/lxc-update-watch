@@ -10,7 +10,9 @@ ADMIN = "test-admin-password"
 
 @pytest.fixture
 def sample_report():
-    return json.loads((FIXTURES / "sample_report.json").read_text(encoding="utf-8"))
+    report = json.loads((FIXTURES / "sample_report.json").read_text(encoding="utf-8"))
+    report["collector_version"] = (Path(__file__).parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+    return report
 
 
 @pytest.fixture

@@ -12,20 +12,26 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
 main{max-width:900px;margin:0 auto;padding:24px 16px}
-header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0 0 4px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 4px}
 h1{font-size:22px;font-weight:500;margin:0}
-.lang{margin:0}
-.lang select{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0}
+.icon-btn svg{width:18px;height:18px}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+#options-dialog{width:min(380px,92vw)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.dlg-head strong{font-size:16px;font-weight:500}
+.opt-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;font-size:14px}
+.opt-row label{margin:0;display:inline-flex;align-items:center;gap:8px}
+.opt-row select{font:inherit;font-size:13px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
 .sub{color:var(--muted);font-size:13px;margin:0}
 footer{margin-top:28px;text-align:center}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-8px 0 16px}
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(340px,90vw)}
 dialog::backdrop{background:rgba(0,0,0,.5)}
 dialog label{display:block;font-size:14px;margin-bottom:8px}
-dialog input{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+dialog input:not([type=checkbox]){width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .dlg-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .job{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px}
-.opt{font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
 #console-box summary{cursor:pointer;font-size:13px;color:var(--muted);margin-top:8px}
 #console{margin:8px 0 0;padding:10px 12px;background:#0d0d0c;color:#d4d4cf;border-radius:8px;font:12px/1.5 ui-monospace,monospace;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 #console .c30,#console .c90{color:#9aa0a6}#console .c31,#console .c91{color:#f28b82}#console .c32,#console .c92{color:#81c995}
@@ -75,26 +81,37 @@ summary.line::-webkit-details-marker{display:none}
 <main>
 <header>
 <h1>{{ t('page_title') }}</h1>
-<form class="lang" method="get" action="/">
-<select name="lang" aria-label="Language" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+<button type="button" class="icon-btn" aria-label="{{ t('options') }}" title="{{ t('options') }}" onclick="document.getElementById('options-dialog').showModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+</header>
+<dialog id="options-dialog" aria-labelledby="options-title">
+<div class="dlg-head"><strong id="options-title">{{ t('options') }}</strong><form method="dialog"><button>{{ t('close') }}</button></form></div>
+<form class="opt-row" method="get" action="/">
+<label for="lang-select">{{ t('opt_language') }}</label>
+<select id="lang-select" name="lang" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
 <noscript><button type="submit">OK</button></noscript>
 </form>
-</header>
+{% if view and view.actions_enabled %}
+<div class="opt-row">
+{% if view.backup_storage %}<label><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
+{% else %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
+</div>
+{% endif %}
+</dialog>
 {% if not view %}
 <p class="sub">{{ t('no_report') }}</p>
 {% else %}
 <div class="bar">
 <p class="sub" id="sub">{{ t('last_check', host=view.host, when=view.checked_at) }}</p>
+<div class="side">
 <button id="refresh" type="button">{{ t('check_now') }}</button>
+{% if view.actions_enabled %}<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>{% endif %}
+</div>
 </div>
 <div id="progress" hidden><div class="track"><div class="fill"></div></div><p class="sub" id="progress-text" aria-live="polite"></p></div>
 {% if view.actions_enabled %}
 <div class="actions">
 <button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
-<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>
 <button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
-{% if view.backup_storage %}<label class="opt"><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
-{% elif view.app_updatable %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
 <span class="sub" id="msg"></span>
 </div>
 <dialog id="pw-dialog"><form method="dialog">
@@ -224,6 +241,12 @@ summary.line::-webkit-details-marker{display:none}
   });
   if (pve) pve.addEventListener('click', function () { act('update_pve_scripts', I18N.js_confirm_pve); });
   var apps = document.getElementById('act-apps'), backup = document.getElementById('opt-backup');
+  if (backup) {  // the choice is remembered by this browser
+    try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
+    backup.addEventListener('change', function () {
+      try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
   if (apps) apps.addEventListener('click', function () {
     var withBackup = !!(backup && backup.checked);
     act('update_apps', fmt(I18N.js_confirm_apps, { names: apps.dataset.names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),

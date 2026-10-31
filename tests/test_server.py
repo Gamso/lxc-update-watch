@@ -289,3 +289,43 @@ def test_page_rows_can_be_animated(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
     assert 'data-ctid="100"' in page and 'class="sys-cell"' in page and "app-cell" in page and 'id="progress"' in page
+
+
+# ---------------------------------------------------------------- options menu and layout
+
+def test_options_menu_holds_the_language_and_the_backup_choice(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert 'class="icon-btn"' in page and 'aria-label="Options"' in page      # the gear button
+    dialog = page[page.index('<dialog id="options-dialog"'):]
+    dialog = dialog[:dialog.index("</dialog>")]
+    assert '<select id="lang-select"' in dialog and "Language" in dialog
+    assert 'id="opt-backup"' in dialog and "Back up before updating applications (backup)" in dialog
+    assert 'id="opt-backup"' not in page.replace(dialog, "")                   # nowhere else on the page
+
+
+def test_options_menu_without_a_backup_storage(web, token_headers, sample_report):
+    sample_report["backup_storage"] = None
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="opt-backup"' not in page and "backup_storage</code> is not set" in page
+
+
+def test_options_menu_is_available_before_the_first_report(web):
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="options-dialog"' in page and '<select id="lang-select"' in page
+
+
+def test_pve_scripts_button_sits_under_check_now(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert page.index('id="refresh"') < page.index('id="act-pve"') < page.index('class="actions"')
+    actions = page[page.index('class="actions"'):]
+    assert 'id="act-pve"' not in actions and 'id="act-os"' in actions and 'id="act-apps"' in actions
+
+
+def test_pve_scripts_button_needs_the_admin_password(web, token_headers, sample_report, monkeypatch):
+    import app as web_app
+    monkeypatch.setattr(web_app, "ADMIN_PASSWORD", "")
+    post_report(web, token_headers, sample_report)
+    assert 'id="act-pve"' not in web.get("/").get_data(as_text=True)
