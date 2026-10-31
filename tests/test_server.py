@@ -336,3 +336,12 @@ def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
     assert form.status_code == 400 and form.get_json()["code"] == "unknown_action"  # a cross-site form cannot start one
     assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"] is None
 
+
+
+def test_only_updates_of_the_containers_ask_for_a_check(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "update_pve_scripts"}).get_json()
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is False
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
+    web.post("/api/actions", json={"action": "upgrade_os"})
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True

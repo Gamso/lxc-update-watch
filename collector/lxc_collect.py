@@ -764,6 +764,20 @@ def run_job(config, job):
 
 # ---------------------------------------------------------------- entry point
 
+def handle_requests(config):
+    """Run the job requested from the web page, if any. Returns True when a full check must follow.
+
+    The service asks for that check itself (a refresh request) when the job changes the containers, i.e. after a
+    system or application update; refreshing the PVE scripts leaves them untouched, so no check follows it."""
+    try:
+        pending = server_call(config, "GET", "/api/jobs/pending", timeout=10)
+    except (OSError, ValueError):  # unreachable service, dropped connection, reply that is not JSON
+        return False
+    if pending.get("job"):
+        run_job(config, pending["job"])
+    return bool(pending.get("refresh"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
@@ -792,15 +806,8 @@ def main():
         print(f"{len(slugs)} script(s) would be refreshed:", ", ".join(sorted(slugs)))
         return
 
-    if args.if_requested:
-        try:
-            pending = server_call(config, "GET", "/api/jobs/pending", timeout=10)
-        except (urllib.error.URLError, ValueError, TimeoutError):
-            return
-        if not pending.get("refresh") and not pending.get("job"):
-            return
-        if pending.get("job"):
-            run_job(config, pending["job"])
+    if args.if_requested and not handle_requests(config):
+        return
 
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cache = {}

@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
 - The *Refresh PVE scripts* button moved under *Check now*, at the right of the page.
 - The minimum supported Python version is 3.13 (the version Proxmox VE 9 ships), and the automated tests run on it.
 
+### Fixed
+- Refreshing the PVE scripts no longer triggers a full check of the containers afterwards; only system and
+  application updates are followed by a check.
+- The collector's one-minute poll no longer fails when the service drops the connection.
+
 ### Removed
 - The administration password: the action buttons no longer ask for anything. `LXC_WATCH_ADMIN_PASSWORD` is ignored
   and `deploy.ps1 -Action password` is gone. Protect the page with the network or a reverse proxy instead (see the

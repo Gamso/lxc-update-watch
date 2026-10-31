@@ -184,3 +184,40 @@ def test_progress_reporter_sends_batches_and_retries(monkeypatch):
     reporter._flush()
     assert sent and sent[0][0] == "/api/progress" and sent[0][1]["run"] == "run-1"
     assert sent[0][1]["events"][0]["type"] == "start"
+
+
+# ---------------------------------------------------------------- requests made from the page
+
+def pending_state(monkeypatch, pending):
+    ran = []
+    monkeypatch.setattr(c, "server_call", lambda *a, **k: pending)
+    monkeypatch.setattr(c, "run_job", lambda config, job: ran.append(job["action"]))
+    return ran
+
+
+def test_nothing_requested_means_nothing_to_do(monkeypatch):
+    ran = pending_state(monkeypatch, {"refresh": False, "job": None})
+    assert c.handle_requests({}) is False and ran == []
+
+
+def test_a_check_request_runs_a_collection(monkeypatch):
+    ran = pending_state(monkeypatch, {"refresh": True, "job": None})
+    assert c.handle_requests({}) is True and ran == []
+
+
+def test_refreshing_the_pve_scripts_does_not_trigger_a_check(monkeypatch):
+    ran = pending_state(monkeypatch, {"refresh": False, "job": {"action": "update_pve_scripts"}})
+    assert c.handle_requests({}) is False and ran == ["update_pve_scripts"]
+
+
+def test_updates_are_followed_by_a_check(monkeypatch):
+    # the service asks for the check itself when it records a system or application update
+    ran = pending_state(monkeypatch, {"refresh": True, "job": {"action": "update_apps"}})
+    assert c.handle_requests({}) is True and ran == ["update_apps"]
+
+
+def test_an_unreachable_service_is_not_an_error(monkeypatch):
+    def down(*args, **kwargs):
+        raise OSError("down")
+    monkeypatch.setattr(c, "server_call", down)
+    assert c.handle_requests({}) is False
