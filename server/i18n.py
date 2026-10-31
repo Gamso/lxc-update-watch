@@ -34,6 +34,11 @@ STRINGS = {
         "job_done_ok": "finished",
         "job_done_errors": "finished with errors",
         "console": "Live output",
+        "step_queued": "Waiting…",
+        "step_system": "Checking system packages…",
+        "step_app": "Checking application version…",
+        "step_docker": "Checking Docker images…",
+        "live_progress": "Checking containers: {done}/{total}",
         "m_pending": "To update",
         "m_packages": "System packages",
         "m_apps": "Applications",
@@ -113,6 +118,11 @@ STRINGS = {
         "job_done_ok": "terminée",
         "job_done_errors": "terminée avec des erreurs",
         "console": "Sortie en direct",
+        "step_queued": "En attente…",
+        "step_system": "Vérification des paquets système…",
+        "step_app": "Vérification de la version de l'application…",
+        "step_docker": "Vérification des images Docker…",
+        "live_progress": "Vérification des conteneurs : {done}/{total}",
         "m_pending": "À mettre à jour",
         "m_packages": "Paquets système",
         "m_apps": "Applications",
@@ -171,7 +181,8 @@ STRINGS = {
 
 # Strings handed to the browser for the page's JavaScript.
 JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "js_confirm_os", "js_confirm_apps",
-           "js_confirm_pve", "js_backup_yes", "js_backup_no")
+           "js_confirm_pve", "js_backup_yes", "js_backup_no", "step_queued", "step_system", "step_app", "step_docker",
+           "live_progress")
 
 
 def pick_language(cookie_value, accept_languages):

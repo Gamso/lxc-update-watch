@@ -199,3 +199,93 @@ def test_unknown_job_is_a_404(web, token_headers):
 def test_status_exposes_the_version(web):
     status = json.loads(web.get("/api/status").get_data(as_text=True))
     assert status["version"]
+
+
+# ---------------------------------------------------------------- live progress of a collection
+
+def progress(web, token_headers, run, *events):
+    response = web.post("/api/progress", json={"run": run, "events": list(events)}, headers=token_headers)
+    assert response.status_code == 200, response.get_json()
+    return response.get_json()
+
+
+START = {"type": "start", "containers": [{"ctid": 100, "name": "vaultwarden", "status": "running"},
+                                          {"ctid": 103, "name": "idle", "status": "stopped"}]}
+
+
+def step(ctid, name, state, **data):
+    return {"type": "step", "ctid": ctid, "step": name, "state": state, "data": data}
+
+
+def test_progress_requires_the_token(web):
+    assert web.post("/api/progress", json={"run": "r", "events": []}).status_code == 401
+    assert web.get("/api/progress").get_json()["active"] is False  # reading is public
+
+
+def test_progress_rejects_a_malformed_body(web, token_headers):
+    assert web.post("/api/progress", json={"events": []}, headers=token_headers).status_code == 400
+    assert web.post("/api/progress", json={"run": "r", "events": "x"}, headers=token_headers).status_code == 400
+
+
+def test_progress_follows_the_steps_of_each_container(web, token_headers):
+    progress(web, token_headers, "run-1", START, step(100, "system", "running"))
+    view = web.get("/api/progress").get_json()
+    assert view["active"] and view["total"] == 2 and view["done"] == 1  # the stopped container needs no check
+    assert view["containers"]["100"]["steps"] == {"system": "running", "app": "queued", "docker": "queued"}
+    assert "sys" not in view["containers"]["100"]
+
+    progress(web, token_headers, "run-1", step(100, "system", "done", os="debian", os_updates=3, packages=["a", "b", "c"]))
+    assert web.get("/api/progress").get_json()["containers"]["100"]["sys"] == {"text": "3 packages", "kind": "w"}
+
+
+def test_application_badges_wait_for_the_docker_step_before_the_placeholder(web, token_headers):
+    progress(web, token_headers, "run-1", START, step(100, "system", "done", os="debian", os_updates=0),
+             step(100, "app", "done"), step(100, "docker", "running"))
+    assert web.get("/api/progress").get_json()["containers"]["100"]["apps"] == []  # no "not tracked" flash yet
+    progress(web, token_headers, "run-1", step(100, "docker", "done"))
+    container = web.get("/api/progress").get_json()["containers"]["100"]
+    assert container["apps"] == [{"text": "App not tracked", "kind": "n"}] and container["pending"] is False
+
+
+def test_finished_containers_with_updates_are_flagged_and_translated(web, token_headers):
+    progress(web, token_headers, "run-1", START, step(100, "system", "done", os="debian", os_updates=0),
+             step(100, "app", "done", app={"name": "vaultwarden", "installed": "1", "latest": "2", "update": True}),
+             step(100, "docker", "done"))
+    english = web.get("/api/progress").get_json()["containers"]["100"]
+    assert english["pending"] is True and english["apps"][0]["text"] == "vaultwarden 1 → 2"
+    web.get("/?lang=fr")
+    assert web.get("/api/progress").get_json()["containers"]["100"]["sys"]["text"] == "Système à jour"
+
+
+def test_a_new_run_replaces_the_previous_one(web, token_headers):
+    progress(web, token_headers, "run-1", START)
+    progress(web, token_headers, "run-2", {"type": "start", "containers": [{"ctid": 7, "name": "x", "status": "running"}]})
+    assert list(web.get("/api/progress").get_json()["containers"]) == ["7"]
+
+
+def test_bad_events_are_ignored(web, token_headers):
+    progress(web, token_headers, "run-1", START, {"type": "step", "ctid": 999, "step": "system", "state": "done"},
+             {"type": "step", "ctid": 100, "step": "nonsense", "state": "done"}, "garbage", {"type": "start"})
+    assert web.get("/api/progress").get_json()["active"] is True
+
+
+def test_the_final_report_ends_the_live_view(web, token_headers, sample_report):
+    run = "2026-10-27T04:58:00+00:00"  # the collector identifies a run by its start time
+    progress(web, token_headers, run, START)
+    post_report(web, token_headers, {**sample_report, "started_at": run})
+    assert web.get("/api/progress").get_json()["active"] is False
+    assert progress(web, token_headers, run, step(100, "system", "running")).get("ignored") is True  # late event
+    assert web.get("/api/progress").get_json()["active"] is False
+
+
+def test_a_collection_that_went_silent_is_not_shown(web, token_headers, monkeypatch):
+    import app as web_app
+    progress(web, token_headers, "run-1", START)
+    monkeypatch.setattr(web_app, "PROGRESS_MAX_AGE_S", -1)
+    assert web.get("/api/progress").get_json()["active"] is False
+
+
+def test_page_rows_can_be_animated(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert 'data-ctid="100"' in page and 'class="sys-cell"' in page and "app-cell" in page and 'id="progress"' in page

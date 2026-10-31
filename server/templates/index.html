@@ -53,6 +53,21 @@ summary.line::-webkit-details-marker{display:none}
 .b.w{background:var(--w-bg);color:var(--w-fg)}.b.s{background:var(--s-bg);color:var(--s-fg)}.b.n{background:var(--n-bg);color:var(--n-fg)}
 .detail{padding:2px 14px 12px 72px;font:13px/1.6 ui-monospace,monospace;color:var(--muted)}
 .detail code{color:var(--fg)}
+#progress{margin:-8px 0 16px}
+#progress .track{height:4px;background:var(--line);border-radius:4px;overflow:hidden}
+#progress .fill{height:100%;width:0;background:var(--fg);border-radius:4px;transition:width .5s ease}
+#progress p{margin:6px 0 0}
+.spin::before{content:"";display:inline-block;width:10px;height:10px;margin-right:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-1px;animation:spin .8s linear infinite}
+.checking{display:inline-block;font-size:12px;padding:2px 8px;border-radius:8px;color:var(--muted);background:linear-gradient(90deg,var(--n-bg) 25%,var(--line) 50%,var(--n-bg) 75%);background-size:300% 100%;animation:shimmer 1.4s linear infinite}
+.is-queued .b{opacity:.4}
+.b{transition:opacity .3s}
+.b.pop{animation:pop .5s ease-out}
+.row.flash{animation:flash 1.8s ease-out}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@keyframes pop{0%{opacity:0;transform:scale(.8)}60%{opacity:1;transform:scale(1.08)}100%{transform:scale(1)}}
+@keyframes flash{0%{box-shadow:0 0 0 3px var(--w-bg);border-color:var(--w-fg)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.checking,.spin::before,.b.pop,.row.flash{animation:none}#progress .fill{transition:none}}
 @media (max-width:640px){.line{grid-template-columns:40px minmax(0,1fr)}.line>:nth-child(n+3){grid-column:2}.detail{padding-left:14px}}
 </style>
 </head>
@@ -72,6 +87,7 @@ summary.line::-webkit-details-marker{display:none}
 <p class="sub" id="sub">{{ t('last_check', host=view.host, when=view.checked_at) }}</p>
 <button id="refresh" type="button">{{ t('check_now') }}</button>
 </div>
+<div id="progress" hidden><div class="track"><div class="fill"></div></div><p class="sub" id="progress-text" aria-live="polite"></p></div>
 {% if view.actions_enabled %}
 <div class="actions">
 <button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
@@ -111,10 +127,10 @@ summary.line::-webkit-details-marker{display:none}
 {% if view.pending %}
 <h2>{{ t('sec_pending') }}</h2>
 {% for r in view.pending %}
-<details class="row">
+<details class="row" data-ctid="{{ r.ctid }}">
 <summary class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
-<span><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
-<span class="badges">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></summary>
+<span class="sys-cell"><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
+<span class="badges app-cell">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></summary>
 <div class="detail">
 {% for p in r.packages[:15] %}{{ p }}<br>{% endfor %}
 {% if r.packages|length > 15 %}{{ t('d_more', n=r.packages|length - 15) }}<br>{% endif %}
@@ -133,9 +149,9 @@ summary.line::-webkit-details-marker{display:none}
 {% if view.others %}
 <h2>{{ t('sec_others') }}</h2>
 {% for r in view.others %}
-<div class="row quiet"><div class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
-<span><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
-<span class="badges">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></div></div>
+<div class="row quiet" data-ctid="{{ r.ctid }}"><div class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
+<span class="sys-cell"><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
+<span class="badges app-cell">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></div></div>
 {% endfor %}
 {% endif %}
 {% endif %}
@@ -155,8 +171,10 @@ summary.line::-webkit-details-marker{display:none}
   function waiting() {
     btn.disabled = true;
     btn.textContent = I18N.checking;
+    btn.classList.add('spin');
     sub.textContent = I18N.check_starts;
     watch();
+    startProgress();
   }
   function watch() { if (!timer) timer = setInterval(poll, 5000); }
   function poll() {
@@ -247,6 +265,64 @@ summary.line::-webkit-details-marker{display:none}
   pullLog();
   {% if view.job_active %}setInterval(pullLog, 2000);
   watch();{% endif %}
+
+  // Live check: the collector reports every step of every container and each row animates as the results arrive.
+  var progressBox = document.getElementById('progress'), progressFill = progressBox.querySelector('.fill');
+  var progressText = document.getElementById('progress-text'), progressTimer = null, rowSeen = {};
+  function badgeNode(item) {
+    var node = document.createElement('span');
+    node.className = 'b ' + item.kind + ' pop';
+    node.textContent = item.text;
+    node.title = item.text;
+    return node;
+  }
+  function checkingNode(label) {
+    var node = document.createElement('span');
+    node.className = 'checking';
+    node.textContent = label;
+    return node;
+  }
+  function paint(cell, nodes) { cell.replaceChildren.apply(cell, nodes); }
+  function applyProgress(d) {
+    progressBox.hidden = false;
+    progressFill.style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + '%';
+    progressText.textContent = fmt(I18N.live_progress, { done: d.done, total: d.total });
+    Object.keys(d.containers).forEach(function (ctid) {
+      var c = d.containers[ctid], row = document.querySelector('[data-ctid="' + ctid + '"]');
+      if (!row || c.status !== 'running') return;
+      var sysCell = row.querySelector('.sys-cell'), appCell = row.querySelector('.app-cell');
+      var seen = rowSeen[ctid] || (rowSeen[ctid] = {});
+      row.classList.toggle('is-queued', c.steps.system === 'queued');
+      if (c.steps.system === 'running' && seen.system !== 'running') paint(sysCell, [checkingNode(I18N.step_system)]);
+      if (c.steps.system === 'done' && seen.system !== 'done' && c.sys) paint(sysCell, [badgeNode(c.sys)]);
+      seen.system = c.steps.system;
+      if (c.steps.app !== 'queued') {
+        var appKey = c.steps.app + '/' + c.steps.docker + '/' + JSON.stringify(c.apps || []);
+        if (seen.app !== appKey) {
+          var nodes = (c.apps || []).map(badgeNode);
+          if (c.steps.app === 'running') nodes.push(checkingNode(I18N.step_app));
+          else if (c.steps.docker === 'running') nodes.push(checkingNode(I18N.step_docker));
+          if (nodes.length) paint(appCell, nodes);
+          seen.app = appKey;
+        }
+      }
+      var finished = c.steps.system === 'done' && c.steps.app === 'done' && c.steps.docker === 'done';
+      if (finished && c.pending && !seen.flashed) { row.classList.add('flash'); seen.flashed = true; }
+    });
+  }
+  function pullProgress() {
+    fetch('/api/progress').then(function (r) { return r.json(); }).then(function (d) {
+      if (d.checked_at !== lastCheck) {  // the report is complete: show the final, re-sorted page
+        clearInterval(progressTimer);
+        setTimeout(function () { location.reload(); }, 900);
+      } else if (d.active) {
+        startProgress();
+        applyProgress(d);
+      }
+    }).catch(function () {});
+  }
+  function startProgress() { if (!progressTimer) { progressTimer = setInterval(pullProgress, 1000); pullProgress(); } }
+  pullProgress();  // a collection may already be running (daily timer, or started from another tab)
 
   btn.addEventListener('click', function () {
     btn.disabled = true;

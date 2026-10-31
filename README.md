@@ -10,6 +10,8 @@ and can apply them from the page, with a live console and an optional backup fir
 - Optional action buttons: system update (parallel), application update with the official
   *PVE LXC Apps Update* script (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
+- Live check: **Check now** animates each container row while its system packages, application version and Docker
+  images are being checked, with a progress bar.
 - Pull-based design: the Proxmox host never accepts incoming connections.
 
 ## How it works

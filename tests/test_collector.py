@@ -135,3 +135,52 @@ def test_stream_process_reports_the_exit_code_and_timeouts():
 
 def test_collector_version_comes_from_the_version_file():
     assert c.VERSION == open(c.Path(__file__).parent.parent / "VERSION", encoding="utf-8").read().strip()
+
+
+# ---------------------------------------------------------------- progress reporting
+
+class Recorder:
+    def __init__(self):
+        self.events = []
+
+    def event(self, **fields):
+        self.events.append(fields)
+
+
+def test_collect_one_reports_every_step_in_order(monkeypatch):
+    monkeypatch.setattr(c, "os_updates", lambda ctid: ("debian", 2, ["a", "b"]))
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, ""))
+    monkeypatch.setattr(c, "auto_app_status", lambda *a: {"name": "App", "installed": "1", "latest": "1", "update": False})
+    monkeypatch.setattr(c, "docker_status", lambda *a: [{"image": "x", "update": False}])
+    recorder = Recorder()
+    ct = c.collect_one(("100", "running", "app"), {}, {}, recorder)
+    assert [(e["step"], e["state"]) for e in recorder.events] == [
+        ("system", "running"), ("system", "done"), ("app", "running"), ("app", "done"), ("docker", "running"), ("docker", "done")]
+    system_done = recorder.events[1]["data"]
+    assert system_done["os_updates"] == 2 and system_done["helper_script"] is True
+    assert recorder.events[3]["data"]["app"]["name"] == "App" and recorder.events[5]["data"]["docker"][0]["image"] == "x"
+    assert ct["os_updates"] == 2 and ct["app"]["name"] == "App"
+
+
+def test_collect_one_reports_nothing_for_a_stopped_container():
+    recorder = Recorder()
+    assert c.collect_one(("103", "stopped", "idle"), {}, {}, recorder) == {"ctid": 103, "name": "idle", "status": "stopped"}
+    assert recorder.events == []
+
+
+def test_progress_reporter_sends_batches_and_retries(monkeypatch):
+    sent, failures = [], [True]
+
+    def fake_call(config, method, path, body=None, timeout=15):
+        if failures:
+            failures.clear()
+            raise OSError("server down")
+        sent.append((path, body))
+
+    monkeypatch.setattr(c, "server_call", fake_call)
+    reporter = c.ProgressReporter({}, "run-1")
+    reporter.event(type="start", containers=[])
+    reporter.close()          # first flush fails, the final one delivers
+    reporter._flush()
+    assert sent and sent[0][0] == "/api/progress" and sent[0][1]["run"] == "run-1"
+    assert sent[0][1]["events"][0]["type"] == "start"

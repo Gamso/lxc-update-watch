@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Live check: when a check runs, the collector reports each step of each container (system packages, application
+  version, Docker images) and the page animates every row as results arrive, with a progress bar. The final report
+  reloads the page with the sorted result.
+
 ### Changed
 - The minimum supported Python version is 3.13 (the version Proxmox VE 9 ships), and the automated tests run on it.
 

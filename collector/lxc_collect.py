@@ -455,14 +455,64 @@ def auto_app_status(ctid, name, config, cache):
     return None
 
 
-def collect_one(entry, config, cache):
+class ProgressReporter:
+    """Tells the web page what the collection is doing, step by step, so that it can animate each container.
+
+    Best effort: events are sent in the background, once every half second, and the collection never waits for them."""
+
+    MAX_PENDING = 2000
+
+    def __init__(self, config, run_id):
+        self.config, self.run_id = config, run_id
+        self.lock = threading.Lock()
+        self.pending = []
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def event(self, **fields):
+        with self.lock:
+            self.pending.append(fields)
+
+    def _flush(self):
+        with self.lock:
+            events, self.pending = self.pending, []
+        if not events:
+            return
+        try:
+            server_call(self.config, "POST", "/api/progress", {"run": self.run_id, "events": events}, timeout=5)
+        except (urllib.error.URLError, ValueError, TimeoutError, OSError, KeyError):
+            with self.lock:
+                self.pending = (events + self.pending)[-self.MAX_PENDING:]  # retried on the next pass
+
+    def _loop(self):
+        while not self.stop.wait(0.5):
+            self._flush()
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=5)
+        self._flush()
+
+
+def report_step(progress, ctid, step, state, data=None):
+    if progress:
+        progress.event(type="step", ctid=int(ctid), step=step, state=state, data=data or {})
+
+
+def collect_one(entry, config, cache, progress=None):
     ctid, status, name = entry
     ct = {"ctid": int(ctid), "name": name, "status": status}
     if status != "running":
         return ct
+    report_step(progress, ctid, "system", "running")
     ct["os"], ct["os_updates"], ct["packages"] = os_updates(ctid)
     rc, _ = pct_exec(ctid, "test -f /usr/bin/update")
     ct["helper_script"] = rc == 0
+    report_step(progress, ctid, "system", "done",
+                {k: ct[k] for k in ("os", "os_updates", "packages", "helper_script")})
+
+    report_step(progress, ctid, "app", "running")
     app_cfg = config.get("apps", {}).get(ctid)
     if app_cfg and "apt_package" in app_cfg:
         ct["app"] = apt_app_status(ctid, app_cfg, ct["packages"])
@@ -472,9 +522,13 @@ def collect_one(entry, config, cache):
         auto = auto_app_status(ctid, name, config, cache)
         if auto:
             ct["app"] = auto
+    report_step(progress, ctid, "app", "done", {"app": ct["app"]} if "app" in ct else None)
+
+    report_step(progress, ctid, "docker", "running")
     docker = docker_status(ctid, config.get("registry_auth", {}), cache)
     if docker:
         ct["docker"] = docker
+    report_step(progress, ctid, "docker", "done", {"docker": docker} if docker else None)
     return ct
 
 
@@ -750,8 +804,14 @@ def main():
 
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cache = {}
+    to_check = list_containers()
+    progress = None if args.dry_run else ProgressReporter(config, started_at)
+    if progress:
+        progress.event(type="start", containers=[{"ctid": int(c[0]), "name": c[2], "status": c[1]} for c in to_check])
     with ThreadPoolExecutor(max_workers=4) as pool:
-        containers = list(pool.map(lambda e: collect_one(e, config, cache), list_containers()))
+        containers = list(pool.map(lambda e: collect_one(e, config, cache, progress), to_check))
+    if progress:
+        progress.close()  # every event must be delivered before the report ends the live view
     containers.sort(key=lambda c: c["ctid"])
     report = {
         "host": socket.gethostname(),
