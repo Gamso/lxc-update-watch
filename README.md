@@ -48,7 +48,9 @@ If PowerShell refuses to run the script: `powershell -ExecutionPolicy Bypass -Fi
 
 - The Proxmox password is asked **once** per run, kept in memory only and handed to `ssh`/`scp` through `SSH_ASKPASS`.
   Nothing is written to disk or installed on Proxmox (a permanent SSH key is possible but optional: `-Action ssh-key`).
-- The host address and the CTID are remembered in `deploy.settings.json` (no secret in it, git-ignored).
+- On the first run the script asks for the Proxmox host (IP or name) and the CTID of the web service's LXC, then
+  remembers them in `deploy.settings.json` (no secret in it, git-ignored). They can also be given with
+  `-ProxmoxHost`, `-User` (default `root`) and `-ServiceCtid`, which override the saved values.
 - Replaced files are backed up on Proxmox (`.bak-YYYYMMDDHHMMSS`, three kept). Your
   `/etc/lxc-update-watch.json` is never overwritten: only the token (aligned with the service's) and missing keys
   are added, with a backup.
