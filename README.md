@@ -154,7 +154,8 @@ Only needed for what the automatic detection does not cover.
 ## Action buttons
 
 A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
-output to the page's console. There is no password: anyone who can open the page can start them (see the security
+output to the page's console, with one tab per container (waiting, running, ok or failed) and a color per
+container in the *All* view. There is no password: anyone who can open the page can start them (see the security
 notes below).
 
 - **Update system** runs `apt-get upgrade` (never `dist-upgrade`) or `apk upgrade` in containers with pending

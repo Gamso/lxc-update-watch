@@ -547,11 +547,21 @@ CSI_RE = re.compile(r"\x1b\[[0-9;?]*([@-~])")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f]|\x1b(?!\[)[()]?[A-Za-z0-9]?")
 
 
+READABLE_RE = re.compile(r"[^\W_]")  # a letter or a digit: lines without one are banner art and frames
+
+
 def clean_line(raw):
     """Keep colors (SGR) but drop cursor moves, erasures and spinners: a \\r rewrites the current line."""
     text = CSI_RE.sub(lambda m: m.group(0) if m.group(1) == "m" else "", raw.rstrip("\n"))
     segments = [s for s in text.split("\r") if s.strip()]
     return CONTROL_RE.sub("", segments[-1]) if segments else ""
+
+
+def finish(shipper, ctid, ok, note=""):
+    """Last lines of a container in the console. The page recognizes the marker and shows the container as done."""
+    if note:
+        shipper.write(f"[CT {ctid}] {note}\n")
+    shipper.write(f"[CT {ctid}] \x1b[{'32' if ok else '31'};1m== finished: {'ok' if ok else 'failed'} ==\x1b[0m\n")
 
 
 class LogShipper:
@@ -606,8 +616,8 @@ def stream_process(cmd, prefix, shipper, timeout, env=None):
     try:
         for raw in iter(proc.stdout.readline, b""):
             line = clean_line(raw.decode("utf-8", "replace"))
-            if not line.strip():
-                continue
+            if not READABLE_RE.search(CSI_RE.sub("", line)):
+                continue  # nothing readable: the ASCII-art banner of the official scripts, frames, blank lines
             shipper.write(f"{prefix}{line}\x1b[0m\n")
             last = CSI_RE.sub("", line).strip()
             saw_error = saw_error or "[ERROR]" in line
@@ -623,20 +633,25 @@ def upgrade_one(ctid, name, shipper):
     code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", UPGRADE_SCRIPT],
                                    f"[CT {ctid}] ", shipper, 1800)
     if code == 124:
+        finish(shipper, ctid, False, "timed out after 30 minutes")
         return {"label": label, "ok": False, "message": "timed out after 30 minutes"}
+    finish(shipper, ctid, code == 0)
     return {"label": label, "ok": code == 0, "message": last[:200]}
 
 
 def upgrade_containers(ctids, config, shipper):
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
-    results, todo = [], []
+    results, todo, skipped = [], [], []
     for ctid in ctids:
         if ctid in running:
             todo.append((ctid, running[ctid]))
         else:
             results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
+            skipped.append(ctid)
     workers = int(config.get("upgrade_workers", 4))
     shipper.write(f"System update of {len(todo)} container(s), {workers} in parallel\n")
+    for ctid in skipped:
+        finish(shipper, ctid, False, "container stopped or not found")
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results += list(pool.map(lambda t: upgrade_one(*t, shipper), todo))
     return sorted(results, key=lambda r: r["label"])
@@ -651,7 +666,7 @@ def update_apps(job, config, shipper):
     if job.get("backup") and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
-    results, todo = [], []
+    results, todo, skipped = [], [], []
     for ctid in job["ctids"]:
         has_update = ctid in running and pct_exec(ctid, "test -f /usr/bin/update")[0] == 0
         if has_update:
@@ -659,10 +674,13 @@ def update_apps(job, config, shipper):
         else:
             results.append({"label": f"CT {ctid}", "ok": False,
                             "message": "stopped, or no update command (container not created by a helper script)"})
+            skipped.append(ctid)
     workers = int(config.get("app_update_workers", 2))
     backup_note = f", backing up to {storage} first" if job.get("backup") else ", no backup"
     shipper.write(f"Application update of {len(todo)} container(s) with the official script "
                   f"({workers} in parallel{backup_note})\n")
+    for ctid in skipped:
+        finish(shipper, ctid, False, "stopped, or no update command (container not created by a helper script)")
 
     def one(item):
         ctid, name = item
@@ -674,8 +692,10 @@ def update_apps(job, config, shipper):
         code, last, saw_error = stream_process(["bash", "-c", script], f"[CT {ctid}] ", shipper, 3600, env)
         label = f"CT {ctid} {name}"
         if code == 124:
+            finish(shipper, ctid, False, "timed out after one hour")
             return {"label": label, "ok": False, "message": "timed out after one hour"}
         ok = code == 0 and not saw_error
+        finish(shipper, ctid, ok)
         return {"label": label, "ok": ok, "message": (last if ok else (last or f"exit code {code}"))[:200]}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

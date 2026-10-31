@@ -210,6 +210,7 @@ def build_view(state, tr):
     checked = datetime.fromisoformat(state["checked_at"])
     age_h = (datetime.now(timezone.utc) - checked).total_seconds() / 3600
     job = load_job()
+    names = {ct["ctid"]: ct["name"] for ct in state["containers"]}
     collector_version = state.get("collector_version")
     return {
         "host": state.get("host", ""),
@@ -223,6 +224,7 @@ def build_view(state, tr):
         "backup_storage": state.get("backup_storage"),
         "job": job,
         "job_active": job_is_active(job),
+        "job_containers": [{"ctid": ctid, "name": names.get(ctid, "")} for ctid in (job or {}).get("ctids", [])],
         "pending": pending,
         "others": others,
         "total": len(running),

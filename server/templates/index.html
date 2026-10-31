@@ -36,6 +36,16 @@ dialog input:not([type=checkbox]){width:100%;font:inherit;color:var(--fg);backgr
 #console .c30,#console .c90{color:#9aa0a6}#console .c31,#console .c91{color:#f28b82}#console .c32,#console .c92{color:#81c995}
 #console .c33,#console .c93{color:#fdd663}#console .c34,#console .c94{color:#8ab4f8}#console .c35,#console .c95{color:#d7aefb}
 #console .c36,#console .c96{color:#78d9ec}#console .c37,#console .c97{color:#e8eaed}#console .b1{font-weight:600}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
+.tabs button{font-size:12px;padding:3px 10px;display:inline-flex;align-items:center}
+.tabs button.on{border-color:var(--fg)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--line)}
+.dot.running{background:var(--w-fg);animation:pulse 1s ease-in-out infinite}
+.dot.ok{background:#4caf50}.dot.failed{background:#e24d4d}
+@keyframes pulse{50%{opacity:.3}}
+#console .ln[hidden]{display:none}
+#console .ct-tag.k0{color:#8ab4f8}#console .ct-tag.k1{color:#f6a96b}#console .ct-tag.k2{color:#81c995}
+#console .ct-tag.k3{color:#d7aefb}#console .ct-tag.k4{color:#fdd663}#console .ct-tag.k5{color:#78d9ec}
 .job p{margin:0 0 2px}.res{font-size:13px;color:var(--muted)}.res.ko{color:var(--w-fg)}
 .bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 20px}
 button{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
@@ -121,7 +131,12 @@ summary.line::-webkit-details-marker{display:none}
 {% elif j.ok %}{{ t('job_done_ok') }}
 {% else %}{{ t('job_done_errors') }}{% endif %}</p>
 {% for r in j.results %}<p class="res {{ 'ok' if r.ok else 'ko' }}">{{ '✓' if r.ok else '✗' }} {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}
-<details id="console-box"{% if view.job_active %} open{% endif %}><summary>{{ t('console') }}</summary><pre id="console"></pre></details>
+<details id="console-box"{% if view.job_active %} open{% endif %}><summary>{{ t('console') }}</summary>
+{% if view.job_containers %}<div id="console-tabs" class="tabs" role="tablist">
+<button type="button" role="tab" class="on" aria-selected="true" data-ct="">{{ t('tab_all') }}</button>
+{% for c in view.job_containers %}<button type="button" role="tab" aria-selected="false" data-ct="{{ c.ctid }}"><span class="dot waiting"></span>CT {{ c.ctid }}{% if c.name %} {{ c.name }}{% endif %}</button>{% endfor %}
+</div>{% endif %}
+<pre id="console"></pre></details>
 </div>
 {% endif %}
 {% if view.stale %}<div class="banner">{{ t('stale', hours=view.stale_hours) }}</div>{% endif %}
@@ -188,7 +203,7 @@ summary.line::-webkit-details-marker{display:none}
   function watch() { if (!timer) timer = setInterval(poll, 5000); }
   function poll() {
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (s.job_id !== jobId || s.job !== jobStatus || (!s.refreshing && s.checked_at !== lastCheck)) location.reload();
+      if (s.job_id !== jobId || s.job !== jobStatus || (!s.refreshing && s.checked_at !== lastCheck)) reloadKeepingConsole();
     }).catch(function () {});
   }
 
@@ -226,9 +241,32 @@ summary.line::-webkit-details-marker{display:none}
       { backup: withBackup });
   });
 
-  // Live console: the collector streams the job output to the service, the page polls it.
-  var consoleEl = document.getElementById('console'), logOffset = 0, style = { fg: '', bold: false };
-  function addText(text) {
+  // Live console: the collector streams the job output to the service and the page polls it. A line starting with
+  // "[CT n]" belongs to container n: the tabs filter by container and show where each container stands.
+  var consoleEl = document.getElementById('console'), tabsEl = document.getElementById('console-tabs');
+  var logOffset = 0, style = { fg: '', bold: false }, partial = '', activeCt = '', ctState = {}, ctColor = {};
+  var tabs = tabsEl ? [].slice.call(tabsEl.querySelectorAll('button[data-ct]')) : [];
+  tabs.forEach(function (tab, i) {
+    if (tab.dataset.ct) { ctState[tab.dataset.ct] = 'waiting'; ctColor[tab.dataset.ct] = 'k' + ((i - 1) % 6); }
+    tab.addEventListener('click', function () { selectTab(tab.dataset.ct); });
+  });
+  function selectTab(ct) {
+    activeCt = ct;
+    tabs.forEach(function (tab) {
+      var on = tab.dataset.ct === ct;
+      tab.classList.toggle('on', on);
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    [].forEach.call(consoleEl.children, function (line) { line.hidden = ct !== '' && line.dataset.ct !== ct; });
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  function setState(ct, state) {
+    if (!(ct in ctState) || ctState[ct] === 'ok' || ctState[ct] === 'failed') return;
+    ctState[ct] = state;
+    var tab = tabs.filter(function (t) { return t.dataset.ct === ct; })[0];
+    if (tab) tab.querySelector('.dot').className = 'dot ' + state;
+  }
+  function appendStyled(parent, text) {
     var parts = text.replace(/\x1b\[[0-9;?]*[A-Za-ln-z]/g, '').split(/(\x1b\[[0-9;]*m)/);
     parts.forEach(function (part) {
       var sgr = /^\x1b\[([0-9;]*)m$/.exec(part);
@@ -245,19 +283,58 @@ summary.line::-webkit-details-marker{display:none}
         var span = document.createElement('span');
         span.textContent = part;
         span.className = (style.fg + (style.bold ? ' b1' : '')).trim();
-        consoleEl.appendChild(span);
+        parent.appendChild(span);
       }
     });
+  }
+  function addLine(text) {
+    var line = document.createElement('div'), tag = /^\[CT (\d+)\] /.exec(text), ct = tag ? tag[1] : '', rest = text;
+    line.className = 'ln';
+    line.dataset.ct = ct;
+    if (tag) {
+      var label = document.createElement('span');
+      label.className = 'ct-tag ' + (ctColor[ct] || 'k0');
+      label.textContent = tag[0];
+      line.appendChild(label);
+      rest = text.slice(tag[0].length);
+      var done = /== finished: (ok|failed) ==/.exec(rest.replace(/\x1b\[[0-9;]*m/g, ''));
+      setState(ct, done ? done[1] : 'running');
+    }
+    appendStyled(line, rest);
+    line.hidden = activeCt !== '' && ct !== activeCt;
+    consoleEl.appendChild(line);
   }
   function pullLog() {
     if (!consoleEl || !jobId) return;
     fetch('/api/jobs/' + jobId + '/log?offset=' + logOffset).then(function (r) { return r.json(); }).then(function (d) {
       var nearBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
-      if (d.text) addText(d.text);
+      var lines = (partial + (d.text || '')).split('\n');
+      partial = lines.pop();  // the last line may be incomplete: it is completed by the next poll
+      lines.forEach(function (text) { if (text) addLine(text); });
       logOffset = d.offset;
-      if (d.text && nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
+      if (d.status === 'done') {
+        if (partial) { addLine(partial); partial = ''; }
+        Object.keys(ctState).forEach(function (ct) { setState(ct, 'failed'); });  // never finished: interrupted
+      }
+      if (lines.length && nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
     }).catch(function () {});
   }
+  // The page reloads itself when a job or a check ends: keep the console open on the same tab for the same job.
+  function reloadKeepingConsole() {
+    try {
+      var box = document.getElementById('console-box');
+      if (box && jobId) sessionStorage.setItem('lxcw_console', JSON.stringify({ job: jobId, open: box.open, ct: activeCt }));
+    } catch (e) {}
+    location.reload();
+  }
+  try {
+    var savedConsole = JSON.parse(sessionStorage.getItem('lxcw_console') || 'null');
+    sessionStorage.removeItem('lxcw_console');
+    if (savedConsole && savedConsole.job === jobId && consoleEl) {
+      document.getElementById('console-box').open = savedConsole.open;
+      if (savedConsole.ct && tabs.length) selectTab(savedConsole.ct);
+    }
+  } catch (e) {}
   pullLog();
   {% if view.job_active %}setInterval(pullLog, 2000);
   watch();{% endif %}
@@ -310,7 +387,7 @@ summary.line::-webkit-details-marker{display:none}
     fetch('/api/progress').then(function (r) { return r.json(); }).then(function (d) {
       if (d.checked_at !== lastCheck) {  // the report is complete: show the final, re-sorted page
         clearInterval(progressTimer);
-        setTimeout(function () { location.reload(); }, 900);
+        setTimeout(reloadKeepingConsole, 900);
       } else if (d.active) {
         startProgress();
         applyProgress(d);

@@ -221,3 +221,51 @@ def test_an_unreachable_service_is_not_an_error(monkeypatch):
         raise OSError("down")
     monkeypatch.setattr(c, "server_call", down)
     assert c.handle_requests({}) is False
+
+
+# ---------------------------------------------------------------- console per container
+
+def test_finish_marker_is_recognizable_and_colored():
+    shipper = Shipper()
+    c.finish(shipper, 101, True)
+    c.finish(shipper, 122, False, "boom")
+    assert "[CT 101] \x1b[32;1m== finished: ok ==\x1b[0m\n" in shipper.text
+    assert "[CT 122] boom\n" in shipper.text and "[CT 122] \x1b[31;1m== finished: failed ==\x1b[0m\n" in shipper.text
+
+
+def test_banner_art_is_dropped_but_text_is_kept():
+    art = r"print(r'  / /___/   / /___  _  __'); print(r' /_____/_/|_\____/  \____/ .___/'); print('Selected containers: 101')"
+    shipper = Shipper()
+    c.stream_process(python_command(art), "[CT 101] ", shipper, 20)
+    assert shipper.text == "[CT 101] Selected containers: 101\x1b[0m\n"
+
+
+def test_system_update_ends_each_container_with_a_marker(monkeypatch):
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (0, "done", False))
+    shipper = Shipper()
+    assert c.upgrade_one(101, "app", shipper)["ok"] is True
+    assert "== finished: ok ==" in shipper.text
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (124, "", False))
+    shipper = Shipper()
+    assert c.upgrade_one(101, "app", shipper)["ok"] is False
+    assert "timed out after 30 minutes" in shipper.text and "== finished: failed ==" in shipper.text
+
+
+def test_skipped_containers_are_closed_in_the_console(monkeypatch):
+    monkeypatch.setattr(c, "list_containers", lambda: [("7", "running", "other")])
+    shipper = Shipper()
+    results = c.upgrade_containers([5], {"upgrade_workers": 1}, shipper)
+    assert results[0]["ok"] is False
+    assert "[CT 5] container stopped or not found" in shipper.text and "[CT 5] \x1b[31;1m== finished: failed" in shipper.text
+
+
+def test_application_update_closes_every_container(monkeypatch):
+    monkeypatch.setattr(c, "cached_fetch", lambda *a, **k: "echo script")
+    monkeypatch.setattr(c, "list_containers", lambda: [("100", "running", "a"), ("102", "running", "b")])
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0 if int(ctid) == 100 else 1, ""))
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (0, "updated", False))
+    shipper = Shipper()
+    results = c.update_apps({"ctids": [100, 102], "backup": False}, {"app_update_workers": 1}, shipper)
+    assert [r["ok"] for r in results] == [True, False]
+    assert "[CT 100] \x1b[32;1m== finished: ok" in shipper.text          # updated
+    assert "[CT 102] stopped, or no update command" in shipper.text and "[CT 102] \x1b[31;1m== finished: failed" in shipper.text

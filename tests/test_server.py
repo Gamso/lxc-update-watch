@@ -326,7 +326,7 @@ def test_actions_run_without_any_password(web, token_headers, sample_report):
 def test_page_has_no_password_prompt(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert "pw-dialog" not in page and "X-Admin-Password" not in page and "sessionStorage" not in page
+    assert "pw-dialog" not in page and "X-Admin-Password" not in page and "lxcw_pw" not in page
     assert all(f'id="{button}"' in page for button in ("act-os", "act-apps", "act-pve")) and 'id="msg"' in page
 
 
@@ -345,3 +345,22 @@ def test_only_updates_of_the_containers_ask_for_a_check(web, token_headers, samp
     web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
     web.post("/api/actions", json={"action": "upgrade_os"})
     assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
+
+
+# ---------------------------------------------------------------- console tabs
+
+def test_console_has_one_tab_per_container_of_the_job(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    web.post("/api/actions", json={"action": "upgrade_os"})
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="console-tabs"' in page and ">All</button>" in page
+    assert 'data-ct="100"' in page and "CT 100 vaultwarden" in page and 'data-ct="102"' in page and "CT 102 alpine-box" in page
+    web.get("/?lang=fr")
+    assert ">Tous</button>" in web.get("/").get_data(as_text=True)
+
+
+def test_console_has_no_tabs_for_a_job_without_containers(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    web.post("/api/actions", json={"action": "update_pve_scripts"})
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="console"' in page and 'id="console-tabs"' not in page

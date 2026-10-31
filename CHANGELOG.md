@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - Options menu (gear icon): language selector and the *Back up before updating applications* choice, which is
   remembered by the browser.
+- Console per container: one tab per container with its state (waiting, running, ok, failed), a color per
+  container on the `[CT n]` prefixes in the *All* view, and the ASCII-art banners of the official scripts filtered
+  out. The console stays open on the same tab when the page reloads at the end of a job.
 - Live check: when a check runs, the collector reports each step of each container (system packages, application
   version, Docker images) and the page animates every row as results arrive, with a progress bar. The final report
   reloads the page with the sorted result.
