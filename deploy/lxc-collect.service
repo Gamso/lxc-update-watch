@@ -1,0 +1,7 @@
+[Unit]
+Description=LXC update watch (collector)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock /run/lxc-collect.lock /usr/bin/python3 /opt/lxc-update-watch/collector/lxc_collect.py

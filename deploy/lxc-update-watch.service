@@ -1,0 +1,15 @@
+[Unit]
+Description=LXC update watch (web)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/lxc-update-watch/server
+EnvironmentFile=/etc/lxc-update-watch.env
+Environment=LXC_WATCH_DATA=/var/lib/lxc-update-watch
+StateDirectory=lxc-update-watch
+ExecStart=/opt/lxc-update-watch/venv/bin/gunicorn -w 1 -b 0.0.0.0:8080 app:app
+Restart=on-failure
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

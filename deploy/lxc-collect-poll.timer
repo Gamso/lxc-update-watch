@@ -1,0 +1,10 @@
+[Unit]
+Description=Every minute, check whether the web page requested a refresh or an action
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

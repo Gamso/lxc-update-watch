@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ t('page_title') }}</title>
+<style>
+:root{--bg:#f6f6f4;--card:#fff;--line:#e2e2dd;--fg:#1c1c1a;--muted:#6b6b66;
+--w-bg:#fbeed0;--w-fg:#7a4a06;--s-bg:#dff2e1;--s-fg:#1f6b2e;--n-bg:#ececE8;--n-fg:#55554f}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#1f1f1d;--line:#34342f;--fg:#ececE8;--muted:#9a9a93;
+--w-bg:#4a3510;--w-fg:#f6cf80;--s-bg:#17361d;--s-fg:#8fd69c;--n-bg:#2b2b28;--n-fg:#b5b5ad}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:900px;margin:0 auto;padding:24px 16px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0 0 4px}
+h1{font-size:22px;font-weight:500;margin:0}
+.lang{font-size:13px}
+.lang a{color:var(--muted);text-decoration:none;padding:2px 6px;border-radius:6px}
+.lang a.on{color:var(--fg);background:var(--card);border:1px solid var(--line)}
+.sub{color:var(--muted);font-size:13px;margin:0}
+footer{margin-top:28px;text-align:center}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-8px 0 16px}
+dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(340px,90vw)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+dialog label{display:block;font-size:14px;margin-bottom:8px}
+dialog input{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.dlg-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.job{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px}
+.opt{font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+#console-box summary{cursor:pointer;font-size:13px;color:var(--muted);margin-top:8px}
+#console{margin:8px 0 0;padding:10px 12px;background:#0d0d0c;color:#d4d4cf;border-radius:8px;font:12px/1.5 ui-monospace,monospace;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+#console .c30,#console .c90{color:#9aa0a6}#console .c31,#console .c91{color:#f28b82}#console .c32,#console .c92{color:#81c995}
+#console .c33,#console .c93{color:#fdd663}#console .c34,#console .c94{color:#8ab4f8}#console .c35,#console .c95{color:#d7aefb}
+#console .c36,#console .c96{color:#78d9ec}#console .c37,#console .c97{color:#e8eaed}#console .b1{font-weight:600}
+.job p{margin:0 0 2px}.res{font-size:13px;color:var(--muted)}.res.ko{color:var(--w-fg)}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 20px}
+button{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--muted)}button:disabled{color:var(--muted);cursor:default}
+.banner{background:var(--w-bg);color:var(--w-fg);padding:8px 12px;border-radius:8px;margin-bottom:16px;font-size:14px}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:8px}
+.metrics div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+.metrics small{display:block;color:var(--muted);font-size:13px}
+.metrics strong{font-size:24px;font-weight:500}
+h2{font-size:12px;font-weight:400;color:var(--muted);margin:20px 0 8px}
+.row{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+.row.quiet{background:transparent;color:var(--muted)}
+.line{display:grid;grid-template-columns:48px minmax(0,1fr) 150px minmax(0,300px);gap:10px;align-items:center;padding:10px 14px}
+summary.line{cursor:pointer;list-style:none}
+summary.line::-webkit-details-marker{display:none}
+.name{font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.quiet .name{font-weight:400}
+.badges{display:flex;flex-direction:column;gap:4px;align-items:flex-start;min-width:0}
+.b{display:inline-block;font-size:12px;padding:2px 8px;border-radius:8px;max-width:100%;overflow-wrap:anywhere}
+.b.w{background:var(--w-bg);color:var(--w-fg)}.b.s{background:var(--s-bg);color:var(--s-fg)}.b.n{background:var(--n-bg);color:var(--n-fg)}
+.detail{padding:2px 14px 12px 72px;font:13px/1.6 ui-monospace,monospace;color:var(--muted)}
+.detail code{color:var(--fg)}
+@media (max-width:640px){.line{grid-template-columns:40px minmax(0,1fr)}.line>:nth-child(n+3){grid-column:2}.detail{padding-left:14px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>{{ t('page_title') }}</h1>
+<nav class="lang" aria-label="Language">{% for code in languages %}<a href="/?lang={{ code }}"{% if code == lang %} class="on" aria-current="true"{% endif %}>{{ code|upper }}</a>{% endfor %}</nav>
+</header>
+{% if not view %}
+<p class="sub">{{ t('no_report') }}</p>
+{% else %}
+<div class="bar">
+<p class="sub" id="sub">{{ t('last_check', host=view.host, when=view.checked_at) }}</p>
+<button id="refresh" type="button">{{ t('check_now') }}</button>
+</div>
+{% if view.actions_enabled %}
+<div class="actions">
+<button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
+<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>
+<button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
+{% if view.backup_storage %}<label class="opt"><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
+{% elif view.app_updatable %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
+<span class="sub" id="msg"></span>
+</div>
+<dialog id="pw-dialog"><form method="dialog">
+<label for="pw-field">{{ t('admin_password') }}</label>
+<input id="pw-field" name="password" type="password" autocomplete="current-password" required>
+<div class="dlg-btns"><button value="cancel" formnovalidate>{{ t('cancel') }}</button><button value="ok">{{ t('confirm') }}</button></div>
+</form></dialog>
+{% endif %}
+{% if view.job %}
+{% set j = view.job %}
+<div class="job">
+<p><strong>{{ t('job_update_apps_backup' if j.action == 'update_apps' and j.backup else 'job_' ~ j.action) }}</strong> ·
+{% if j.status == 'pending' %}{{ t('job_pending') }}
+{% elif j.status == 'running' %}{{ t('job_running') }}
+{% elif j.ok %}{{ t('job_done_ok') }}
+{% else %}{{ t('job_done_errors') }}{% endif %}</p>
+{% for r in j.results %}<p class="res {{ 'ok' if r.ok else 'ko' }}">{{ '✓' if r.ok else '✗' }} {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}
+<details id="console-box"{% if view.job_active %} open{% endif %}><summary>{{ t('console') }}</summary><pre id="console"></pre></details>
+</div>
+{% endif %}
+{% if view.stale %}<div class="banner">{{ t('stale', hours=view.stale_hours) }}</div>{% endif %}
+{% if view.version_mismatch %}<div class="banner">{{ t('version_mismatch', collector=view.collector_version, server=version) }}</div>{% endif %}
+<div class="metrics">
+<div><small>{{ t('m_pending') }}</small><strong>{{ view.n_pending }} / {{ view.total }}</strong></div>
+<div><small>{{ t('m_packages') }}</small><strong>{{ view.n_packages }}</strong></div>
+<div><small>{{ t('m_apps') }}</small><strong>{{ view.n_apps }}</strong></div>
+<div><small>{{ t('m_untracked') }}</small><strong>{{ view.n_untracked }}</strong></div>
+</div>
+
+{% if view.pending %}
+<h2>{{ t('sec_pending') }}</h2>
+{% for r in view.pending %}
+<details class="row">
+<summary class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
+<span><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
+<span class="badges">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></summary>
+<div class="detail">
+{% for p in r.packages[:15] %}{{ p }}<br>{% endfor %}
+{% if r.packages|length > 15 %}{{ t('d_more', n=r.packages|length - 15) }}<br>{% endif %}
+{% if r.docker_pending %}<br>{{ t('d_docker_newer') }}<br>
+{% for i in r.docker_pending %}{{ i.image }}<br>{% endfor %}
+{{ t('d_docker_update')|safe }}<br>{% endif %}
+{% if r.docker_unchecked %}<br>{{ t('d_unchecked') }}<br>{% for i in r.docker_unchecked %}{{ i.image }} ({{ i.error }})<br>{% endfor %}{% endif %}
+{% if r.app_pending and r.app.source %}<br>{{ t('d_target', name=r.app.name, latest=r.app.latest, source=r.app.source) }}{% endif %}
+{% if r.app_pending and r.app.components and r.app.components|length > 1 %}<br>{{ t('d_components') }} {% for c in r.app.components %}{{ c.name }} {{ c.installed }}{% if c.update %} → {{ c.latest }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+{% if r.app_pending and r.update_cmd %}<br>{{ t('d_app_update') }} <code>{{ r.update_cmd }}</code>{% endif %}
+</div>
+</details>
+{% endfor %}
+{% endif %}
+
+{% if view.others %}
+<h2>{{ t('sec_others') }}</h2>
+{% for r in view.others %}
+<div class="row quiet"><div class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
+<span><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
+<span class="badges">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></div></div>
+{% endfor %}
+{% endif %}
+{% endif %}
+<footer class="sub">lxc-update-watch v{{ version }}{% if view and view.collector_version %} · collector v{{ view.collector_version }}{% endif %}</footer>
+</main>
+{% if view %}
+<script>
+(function () {
+  var I18N = {{ i18n|tojson }};
+  function fmt(template, values) {
+    return template.replace(/\{(\w+)\}/g, function (_, key) { return key in values ? values[key] : '{' + key + '}'; });
+  }
+  var btn = document.getElementById('refresh'), sub = document.getElementById('sub');
+  var lastCheck = {{ view.checked_raw|tojson }}, timer = null;
+  var jobId = {{ (view.job.id if view.job else None)|tojson }}, jobStatus = {{ (view.job.status if view.job else None)|tojson }};
+
+  function waiting() {
+    btn.disabled = true;
+    btn.textContent = I18N.checking;
+    sub.textContent = I18N.check_starts;
+    watch();
+  }
+  function watch() { if (!timer) timer = setInterval(poll, 5000); }
+  function poll() {
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (s.job_id !== jobId || s.job !== jobStatus || (!s.refreshing && s.checked_at !== lastCheck)) location.reload();
+    }).catch(function () {});
+  }
+
+  var msg = document.getElementById('msg');
+  function password() {
+    try { var saved = sessionStorage.getItem('lxcw_pw'); if (saved) return Promise.resolve(saved); } catch (e) {}
+    return new Promise(function (resolve) {
+      var dlg = document.getElementById('pw-dialog'), field = dlg.querySelector('input');
+      field.value = '';
+      dlg.returnValue = '';
+      dlg.addEventListener('close', function done() {
+        dlg.removeEventListener('close', done);
+        resolve(dlg.returnValue === 'ok' ? field.value : null);
+      });
+      dlg.showModal();
+      field.focus();
+    });
+  }
+  function act(action, question, extra) {
+    if (!window.confirm(question)) return;
+    password().then(function (pw) { if (pw) send(action, pw, extra); });
+  }
+  function send(action, pw, extra) {
+    msg.textContent = '';
+    fetch('/api/actions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
+      body: JSON.stringify(Object.assign({ action: action }, extra || {}))
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (r.status === 401) { try { sessionStorage.removeItem('lxcw_pw'); } catch (e) {} }
+        if (!r.ok) throw new Error((body.code && I18N.api_err[body.code]) || body.error || I18N.request_refused);
+        try { sessionStorage.setItem('lxcw_pw', pw); } catch (e) {}
+        location.reload();
+      });
+    }).catch(function (e) { msg.textContent = e.message; });
+  }
+
+  var os = document.getElementById('act-os'), pve = document.getElementById('act-pve');
+  if (os) os.addEventListener('click', function () {
+    act('upgrade_os', fmt(I18N.js_confirm_os, { names: os.dataset.names }));
+  });
+  if (pve) pve.addEventListener('click', function () { act('update_pve_scripts', I18N.js_confirm_pve); });
+  var apps = document.getElementById('act-apps'), backup = document.getElementById('opt-backup');
+  if (apps) apps.addEventListener('click', function () {
+    var withBackup = !!(backup && backup.checked);
+    act('update_apps', fmt(I18N.js_confirm_apps, { names: apps.dataset.names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
+      { backup: withBackup });
+  });
+
+  // Live console: the collector streams the job output to the service, the page polls it.
+  var consoleEl = document.getElementById('console'), logOffset = 0, style = { fg: '', bold: false };
+  function addText(text) {
+    var parts = text.replace(/\x1b\[[0-9;?]*[A-Za-ln-z]/g, '').split(/(\x1b\[[0-9;]*m)/);
+    parts.forEach(function (part) {
+      var sgr = /^\x1b\[([0-9;]*)m$/.exec(part);
+      if (sgr) {
+        (sgr[1] || '0').split(';').forEach(function (code) {
+          var c = +code;
+          if (c === 0) { style.fg = ''; style.bold = false; }
+          else if (c === 1) style.bold = true;
+          else if (c === 22) style.bold = false;
+          else if (c === 39) style.fg = '';
+          else if ((c >= 30 && c <= 37) || (c >= 90 && c <= 97)) style.fg = 'c' + c;
+        });
+      } else if (part) {
+        var span = document.createElement('span');
+        span.textContent = part;
+        span.className = (style.fg + (style.bold ? ' b1' : '')).trim();
+        consoleEl.appendChild(span);
+      }
+    });
+  }
+  function pullLog() {
+    if (!consoleEl || !jobId) return;
+    fetch('/api/jobs/' + jobId + '/log?offset=' + logOffset).then(function (r) { return r.json(); }).then(function (d) {
+      var nearBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
+      if (d.text) addText(d.text);
+      logOffset = d.offset;
+      if (d.text && nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
+    }).catch(function () {});
+  }
+  pullLog();
+  {% if view.job_active %}setInterval(pullLog, 2000);
+  watch();{% endif %}
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    fetch('/api/refresh', { method: 'POST' }).then(function (r) {
+      if (!r.ok) throw new Error();
+      waiting();
+    }).catch(function () { btn.disabled = false; sub.textContent = I18N.request_failed; });
+  });
+  {% if view.refreshing %}waiting();{% endif %}
+})();
+</script>
+{% endif %}
+</body>
+</html>
