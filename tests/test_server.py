@@ -40,6 +40,15 @@ def test_page_defaults_to_english_and_follows_the_browser(web, token_headers, sa
     assert '<html lang="fr">' in french and "Vérifier maintenant" in french and "Paquets système" in french
 
 
+def test_language_selector_lists_every_language(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    english = web.get("/").get_data(as_text=True)
+    assert '<option value="en" selected>English</option>' in english and '<option value="fr">Français</option>' in english
+    french = web.get("/", headers={"Accept-Language": "fr"}).get_data(as_text=True)
+    assert '<option value="fr" selected>Français</option>' in french
+    assert "<select" in web.get("/").get_data(as_text=True)  # also shown before the first report
+
+
 def test_language_switch_sets_a_cookie(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     response = web.get("/?lang=fr")

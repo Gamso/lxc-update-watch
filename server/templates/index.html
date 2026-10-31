@@ -14,9 +14,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-
 main{max-width:900px;margin:0 auto;padding:24px 16px}
 header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0 0 4px}
 h1{font-size:22px;font-weight:500;margin:0}
-.lang{font-size:13px}
-.lang a{color:var(--muted);text-decoration:none;padding:2px 6px;border-radius:6px}
-.lang a.on{color:var(--fg);background:var(--card);border:1px solid var(--line)}
+.lang{margin:0}
+.lang select{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
 .sub{color:var(--muted);font-size:13px;margin:0}
 footer{margin-top:28px;text-align:center}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-8px 0 16px}
@@ -61,7 +60,10 @@ summary.line::-webkit-details-marker{display:none}
 <main>
 <header>
 <h1>{{ t('page_title') }}</h1>
-<nav class="lang" aria-label="Language">{% for code in languages %}<a href="/?lang={{ code }}"{% if code == lang %} class="on" aria-current="true"{% endif %}>{{ code|upper }}</a>{% endfor %}</nav>
+<form class="lang" method="get" action="/">
+<select name="lang" aria-label="Language" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+<noscript><button type="submit">OK</button></noscript>
+</form>
 </header>
 {% if not view %}
 <p class="sub">{{ t('no_report') }}</p>

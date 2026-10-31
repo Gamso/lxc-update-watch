@@ -1,6 +1,8 @@
 """User-interface translations (English and French) and language selection."""
 
 SUPPORTED = ("en", "fr")
+# Name of each language in that language, shown in the page's language selector.
+LANGUAGE_NAMES = {"en": "English", "fr": "Français"}
 DEFAULT = "en"
 COOKIE = "lang"
 

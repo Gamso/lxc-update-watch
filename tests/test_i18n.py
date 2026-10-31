@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from werkzeug.datastructures import LanguageAccept
 
-from i18n import DEFAULT, JS_KEYS, STRINGS, SUPPORTED, Translator, pick_language
+from i18n import DEFAULT, JS_KEYS, LANGUAGE_NAMES, STRINGS, SUPPORTED, Translator, pick_language
 
 ROOT = Path(__file__).parent.parent
 PLACEHOLDER = re.compile(r"\{(\w+)\}")
@@ -20,6 +20,10 @@ def test_placeholders_match_between_languages():
     for key, english in STRINGS["en"].items():
         for lang in SUPPORTED:
             assert set(PLACEHOLDER.findall(STRINGS[lang][key])) == set(PLACEHOLDER.findall(english)), (lang, key)
+
+
+def test_every_language_has_a_display_name():
+    assert set(LANGUAGE_NAMES) == set(SUPPORTED) == set(STRINGS)
 
 
 def test_plural_keys_come_in_pairs():

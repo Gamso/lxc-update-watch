@@ -161,10 +161,11 @@ clear text unless you serve the page over HTTPS.
 
 ## Languages
 
-The interface is available in English and French. The language is taken from the `lang` cookie (set by the EN / FR
-switch), then from the browser's `Accept-Language`, then defaults to English. Translations live in
-`server/i18n.py`; adding a language means adding one dictionary (a test checks that every key exists in all
-languages). Technical output (console, job results, collector messages) is always in English.
+The interface is available in English and French. The language is taken from the `lang` cookie (set by the language
+selector at the top right of the page), then from the browser's `Accept-Language`, then defaults to English.
+Translations live in `server/i18n.py`; adding a language means adding one dictionary to `STRINGS`, its code to
+`SUPPORTED` and its name to `LANGUAGE_NAMES` (a test checks that every key exists in all languages). Technical
+output (console, job results, collector messages) is always in English.
 
 ## Versioning
 

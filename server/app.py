@@ -10,7 +10,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
-from i18n import COOKIE, SUPPORTED, Translator, pick_language
+from i18n import COOKIE, LANGUAGE_NAMES, SUPPORTED, Translator, pick_language
 
 STATE_FILE = Path(os.environ.get("LXC_WATCH_DATA", "data")) / "state.json"
 REFRESH_FILE = STATE_FILE.with_name("refresh.json")
@@ -252,7 +252,8 @@ def index():
     tr = translator()
     state = load_state()
     return render_template("index.html", view=build_view(state, tr) if state else None, t=tr, lang=tr.lang,
-                           languages=SUPPORTED, i18n=tr.browser_strings(), version=VERSION)
+                           languages=[(code, LANGUAGE_NAMES[code]) for code in SUPPORTED],
+                           i18n=tr.browser_strings(), version=VERSION)
 
 
 @app.get("/healthz")
