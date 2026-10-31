@@ -12,25 +12,40 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
 main{max-width:900px;margin:0 auto;padding:24px 16px}
-header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0 0 4px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 4px}
 h1{font-size:22px;font-weight:500;margin:0}
-.lang{margin:0}
-.lang select{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0}
+.icon-btn svg{width:18px;height:18px}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+#options-dialog{width:min(380px,92vw)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.dlg-head strong{font-size:16px;font-weight:500}
+.opt-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;font-size:14px}
+.opt-row label{margin:0;display:inline-flex;align-items:center;gap:8px}
+.opt-row select{font:inherit;font-size:13px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
 .sub{color:var(--muted);font-size:13px;margin:0}
 footer{margin-top:28px;text-align:center}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-8px 0 16px}
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(340px,90vw)}
 dialog::backdrop{background:rgba(0,0,0,.5)}
 dialog label{display:block;font-size:14px;margin-bottom:8px}
-dialog input{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.dlg-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+dialog input:not([type=checkbox]){width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .job{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px}
-.opt{font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
 #console-box summary{cursor:pointer;font-size:13px;color:var(--muted);margin-top:8px}
 #console{margin:8px 0 0;padding:10px 12px;background:#0d0d0c;color:#d4d4cf;border-radius:8px;font:12px/1.5 ui-monospace,monospace;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 #console .c30,#console .c90{color:#9aa0a6}#console .c31,#console .c91{color:#f28b82}#console .c32,#console .c92{color:#81c995}
 #console .c33,#console .c93{color:#fdd663}#console .c34,#console .c94{color:#8ab4f8}#console .c35,#console .c95{color:#d7aefb}
 #console .c36,#console .c96{color:#78d9ec}#console .c37,#console .c97{color:#e8eaed}#console .b1{font-weight:600}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
+.tabs button{font-size:12px;padding:3px 10px;display:inline-flex;align-items:center}
+.tabs button.on{border-color:var(--fg)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--line)}
+.dot.running{background:var(--w-fg);animation:pulse 1s ease-in-out infinite}
+.dot.ok{background:#4caf50}.dot.failed{background:#e24d4d}
+@keyframes pulse{50%{opacity:.3}}
+#console .ln[hidden]{display:none}
+#console .ct-tag.k0{color:#8ab4f8}#console .ct-tag.k1{color:#f6a96b}#console .ct-tag.k2{color:#81c995}
+#console .ct-tag.k3{color:#d7aefb}#console .ct-tag.k4{color:#fdd663}#console .ct-tag.k5{color:#78d9ec}
 .job p{margin:0 0 2px}.res{font-size:13px;color:var(--muted)}.res.ko{color:var(--w-fg)}
 .bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 20px}
 button{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
@@ -53,6 +68,21 @@ summary.line::-webkit-details-marker{display:none}
 .b.w{background:var(--w-bg);color:var(--w-fg)}.b.s{background:var(--s-bg);color:var(--s-fg)}.b.n{background:var(--n-bg);color:var(--n-fg)}
 .detail{padding:2px 14px 12px 72px;font:13px/1.6 ui-monospace,monospace;color:var(--muted)}
 .detail code{color:var(--fg)}
+#progress{margin:-8px 0 16px}
+#progress .track{height:4px;background:var(--line);border-radius:4px;overflow:hidden}
+#progress .fill{height:100%;width:0;background:var(--fg);border-radius:4px;transition:width .5s ease}
+#progress p{margin:6px 0 0}
+.spin::before{content:"";display:inline-block;width:10px;height:10px;margin-right:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-1px;animation:spin .8s linear infinite}
+.checking{display:inline-block;font-size:12px;padding:2px 8px;border-radius:8px;color:var(--muted);background:linear-gradient(90deg,var(--n-bg) 25%,var(--line) 50%,var(--n-bg) 75%);background-size:300% 100%;animation:shimmer 1.4s linear infinite}
+.is-queued .b{opacity:.4}
+.b{transition:opacity .3s}
+.b.pop{animation:pop .5s ease-out}
+.row.flash{animation:flash 1.8s ease-out}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@keyframes pop{0%{opacity:0;transform:scale(.8)}60%{opacity:1;transform:scale(1.08)}100%{transform:scale(1)}}
+@keyframes flash{0%{box-shadow:0 0 0 3px var(--w-bg);border-color:var(--w-fg)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.checking,.spin::before,.b.pop,.row.flash{animation:none}#progress .fill{transition:none}}
 @media (max-width:640px){.line{grid-template-columns:40px minmax(0,1fr)}.line>:nth-child(n+3){grid-column:2}.detail{padding-left:14px}}
 </style>
 </head>
@@ -60,33 +90,38 @@ summary.line::-webkit-details-marker{display:none}
 <main>
 <header>
 <h1>{{ t('page_title') }}</h1>
-<form class="lang" method="get" action="/">
-<select name="lang" aria-label="Language" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+<button type="button" class="icon-btn" aria-label="{{ t('options') }}" title="{{ t('options') }}" onclick="document.getElementById('options-dialog').showModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+</header>
+<dialog id="options-dialog" aria-labelledby="options-title">
+<div class="dlg-head"><strong id="options-title">{{ t('options') }}</strong><form method="dialog"><button>{{ t('close') }}</button></form></div>
+<form class="opt-row" method="get" action="/">
+<label for="lang-select">{{ t('opt_language') }}</label>
+<select id="lang-select" name="lang" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
 <noscript><button type="submit">OK</button></noscript>
 </form>
-</header>
+{% if view %}
+<div class="opt-row">
+{% if view.backup_storage %}<label><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
+{% else %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
+</div>
+{% endif %}
+</dialog>
 {% if not view %}
 <p class="sub">{{ t('no_report') }}</p>
 {% else %}
 <div class="bar">
 <p class="sub" id="sub">{{ t('last_check', host=view.host, when=view.checked_at) }}</p>
+<div class="side">
 <button id="refresh" type="button">{{ t('check_now') }}</button>
+<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>
 </div>
-{% if view.actions_enabled %}
+</div>
+<p class="sub" id="msg" aria-live="polite"></p>
+<div id="progress" hidden><div class="track"><div class="fill"></div></div><p class="sub" id="progress-text" aria-live="polite"></p></div>
 <div class="actions">
 <button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
-<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>
 <button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
-{% if view.backup_storage %}<label class="opt"><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
-{% elif view.app_updatable %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
-<span class="sub" id="msg"></span>
 </div>
-<dialog id="pw-dialog"><form method="dialog">
-<label for="pw-field">{{ t('admin_password') }}</label>
-<input id="pw-field" name="password" type="password" autocomplete="current-password" required>
-<div class="dlg-btns"><button value="cancel" formnovalidate>{{ t('cancel') }}</button><button value="ok">{{ t('confirm') }}</button></div>
-</form></dialog>
-{% endif %}
 {% if view.job %}
 {% set j = view.job %}
 <div class="job">
@@ -96,7 +131,12 @@ summary.line::-webkit-details-marker{display:none}
 {% elif j.ok %}{{ t('job_done_ok') }}
 {% else %}{{ t('job_done_errors') }}{% endif %}</p>
 {% for r in j.results %}<p class="res {{ 'ok' if r.ok else 'ko' }}">{{ '✓' if r.ok else '✗' }} {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}
-<details id="console-box"{% if view.job_active %} open{% endif %}><summary>{{ t('console') }}</summary><pre id="console"></pre></details>
+<details id="console-box"{% if view.job_active %} open{% endif %}><summary>{{ t('console') }}</summary>
+{% if view.job_containers %}<div id="console-tabs" class="tabs" role="tablist">
+<button type="button" role="tab" class="on" aria-selected="true" data-ct="">{{ t('tab_all') }}</button>
+{% for c in view.job_containers %}<button type="button" role="tab" aria-selected="false" data-ct="{{ c.ctid }}"><span class="dot waiting"></span>CT {{ c.ctid }}{% if c.name %} {{ c.name }}{% endif %}</button>{% endfor %}
+</div>{% endif %}
+<pre id="console"></pre></details>
 </div>
 {% endif %}
 {% if view.stale %}<div class="banner">{{ t('stale', hours=view.stale_hours) }}</div>{% endif %}
@@ -111,10 +151,10 @@ summary.line::-webkit-details-marker{display:none}
 {% if view.pending %}
 <h2>{{ t('sec_pending') }}</h2>
 {% for r in view.pending %}
-<details class="row">
+<details class="row" data-ctid="{{ r.ctid }}">
 <summary class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
-<span><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
-<span class="badges">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></summary>
+<span class="sys-cell"><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
+<span class="badges app-cell">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></summary>
 <div class="detail">
 {% for p in r.packages[:15] %}{{ p }}<br>{% endfor %}
 {% if r.packages|length > 15 %}{{ t('d_more', n=r.packages|length - 15) }}<br>{% endif %}
@@ -133,9 +173,9 @@ summary.line::-webkit-details-marker{display:none}
 {% if view.others %}
 <h2>{{ t('sec_others') }}</h2>
 {% for r in view.others %}
-<div class="row quiet"><div class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
-<span><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
-<span class="badges">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></div></div>
+<div class="row quiet" data-ctid="{{ r.ctid }}"><div class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
+<span class="sys-cell"><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
+<span class="badges app-cell">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></div></div>
 {% endfor %}
 {% endif %}
 {% endif %}
@@ -155,46 +195,29 @@ summary.line::-webkit-details-marker{display:none}
   function waiting() {
     btn.disabled = true;
     btn.textContent = I18N.checking;
+    btn.classList.add('spin');
     sub.textContent = I18N.check_starts;
     watch();
+    startProgress();
   }
   function watch() { if (!timer) timer = setInterval(poll, 5000); }
   function poll() {
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (s.job_id !== jobId || s.job !== jobStatus || (!s.refreshing && s.checked_at !== lastCheck)) location.reload();
+      if (s.job_id !== jobId || s.job !== jobStatus || (!s.refreshing && s.checked_at !== lastCheck)) reloadKeepingConsole();
     }).catch(function () {});
   }
 
   var msg = document.getElementById('msg');
-  function password() {
-    try { var saved = sessionStorage.getItem('lxcw_pw'); if (saved) return Promise.resolve(saved); } catch (e) {}
-    return new Promise(function (resolve) {
-      var dlg = document.getElementById('pw-dialog'), field = dlg.querySelector('input');
-      field.value = '';
-      dlg.returnValue = '';
-      dlg.addEventListener('close', function done() {
-        dlg.removeEventListener('close', done);
-        resolve(dlg.returnValue === 'ok' ? field.value : null);
-      });
-      dlg.showModal();
-      field.focus();
-    });
-  }
   function act(action, question, extra) {
     if (!window.confirm(question)) return;
-    password().then(function (pw) { if (pw) send(action, pw, extra); });
-  }
-  function send(action, pw, extra) {
     msg.textContent = '';
     fetch('/api/actions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ action: action }, extra || {}))
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
-        if (r.status === 401) { try { sessionStorage.removeItem('lxcw_pw'); } catch (e) {} }
         if (!r.ok) throw new Error((body.code && I18N.api_err[body.code]) || body.error || I18N.request_refused);
-        try { sessionStorage.setItem('lxcw_pw', pw); } catch (e) {}
         location.reload();
       });
     }).catch(function (e) { msg.textContent = e.message; });
@@ -206,15 +229,44 @@ summary.line::-webkit-details-marker{display:none}
   });
   if (pve) pve.addEventListener('click', function () { act('update_pve_scripts', I18N.js_confirm_pve); });
   var apps = document.getElementById('act-apps'), backup = document.getElementById('opt-backup');
+  if (backup) {  // the choice is remembered by this browser
+    try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
+    backup.addEventListener('change', function () {
+      try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
   if (apps) apps.addEventListener('click', function () {
     var withBackup = !!(backup && backup.checked);
     act('update_apps', fmt(I18N.js_confirm_apps, { names: apps.dataset.names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
       { backup: withBackup });
   });
 
-  // Live console: the collector streams the job output to the service, the page polls it.
-  var consoleEl = document.getElementById('console'), logOffset = 0, style = { fg: '', bold: false };
-  function addText(text) {
+  // Live console: the collector streams the job output to the service and the page polls it. A line starting with
+  // "[CT n]" belongs to container n: the tabs filter by container and show where each container stands.
+  var consoleEl = document.getElementById('console'), tabsEl = document.getElementById('console-tabs');
+  var logOffset = 0, style = { fg: '', bold: false }, partial = '', activeCt = '', ctState = {}, ctColor = {};
+  var tabs = tabsEl ? [].slice.call(tabsEl.querySelectorAll('button[data-ct]')) : [];
+  tabs.forEach(function (tab, i) {
+    if (tab.dataset.ct) { ctState[tab.dataset.ct] = 'waiting'; ctColor[tab.dataset.ct] = 'k' + ((i - 1) % 6); }
+    tab.addEventListener('click', function () { selectTab(tab.dataset.ct); });
+  });
+  function selectTab(ct) {
+    activeCt = ct;
+    tabs.forEach(function (tab) {
+      var on = tab.dataset.ct === ct;
+      tab.classList.toggle('on', on);
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    [].forEach.call(consoleEl.children, function (line) { line.hidden = ct !== '' && line.dataset.ct !== ct; });
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  function setState(ct, state) {
+    if (!(ct in ctState) || ctState[ct] === 'ok' || ctState[ct] === 'failed') return;
+    ctState[ct] = state;
+    var tab = tabs.filter(function (t) { return t.dataset.ct === ct; })[0];
+    if (tab) tab.querySelector('.dot').className = 'dot ' + state;
+  }
+  function appendStyled(parent, text) {
     var parts = text.replace(/\x1b\[[0-9;?]*[A-Za-ln-z]/g, '').split(/(\x1b\[[0-9;]*m)/);
     parts.forEach(function (part) {
       var sgr = /^\x1b\[([0-9;]*)m$/.exec(part);
@@ -231,22 +283,119 @@ summary.line::-webkit-details-marker{display:none}
         var span = document.createElement('span');
         span.textContent = part;
         span.className = (style.fg + (style.bold ? ' b1' : '')).trim();
-        consoleEl.appendChild(span);
+        parent.appendChild(span);
       }
     });
+  }
+  function addLine(text) {
+    var line = document.createElement('div'), tag = /^\[CT (\d+)\] /.exec(text), ct = tag ? tag[1] : '', rest = text;
+    line.className = 'ln';
+    line.dataset.ct = ct;
+    if (tag) {
+      var label = document.createElement('span');
+      label.className = 'ct-tag ' + (ctColor[ct] || 'k0');
+      label.textContent = tag[0];
+      line.appendChild(label);
+      rest = text.slice(tag[0].length);
+      var done = /== finished: (ok|failed) ==/.exec(rest.replace(/\x1b\[[0-9;]*m/g, ''));
+      setState(ct, done ? done[1] : 'running');
+    }
+    appendStyled(line, rest);
+    line.hidden = activeCt !== '' && ct !== activeCt;
+    consoleEl.appendChild(line);
   }
   function pullLog() {
     if (!consoleEl || !jobId) return;
     fetch('/api/jobs/' + jobId + '/log?offset=' + logOffset).then(function (r) { return r.json(); }).then(function (d) {
       var nearBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
-      if (d.text) addText(d.text);
+      var lines = (partial + (d.text || '')).split('\n');
+      partial = lines.pop();  // the last line may be incomplete: it is completed by the next poll
+      lines.forEach(function (text) { if (text) addLine(text); });
       logOffset = d.offset;
-      if (d.text && nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
+      if (d.status === 'done') {
+        if (partial) { addLine(partial); partial = ''; }
+        Object.keys(ctState).forEach(function (ct) { setState(ct, 'failed'); });  // never finished: interrupted
+      }
+      if (lines.length && nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
     }).catch(function () {});
   }
+  // The page reloads itself when a job or a check ends: keep the console open on the same tab for the same job.
+  function reloadKeepingConsole() {
+    try {
+      var box = document.getElementById('console-box');
+      if (box && jobId) sessionStorage.setItem('lxcw_console', JSON.stringify({ job: jobId, open: box.open, ct: activeCt }));
+    } catch (e) {}
+    location.reload();
+  }
+  try {
+    var savedConsole = JSON.parse(sessionStorage.getItem('lxcw_console') || 'null');
+    sessionStorage.removeItem('lxcw_console');
+    if (savedConsole && savedConsole.job === jobId && consoleEl) {
+      document.getElementById('console-box').open = savedConsole.open;
+      if (savedConsole.ct && tabs.length) selectTab(savedConsole.ct);
+    }
+  } catch (e) {}
   pullLog();
   {% if view.job_active %}setInterval(pullLog, 2000);
   watch();{% endif %}
+
+  // Live check: the collector reports every step of every container and each row animates as the results arrive.
+  var progressBox = document.getElementById('progress'), progressFill = progressBox.querySelector('.fill');
+  var progressText = document.getElementById('progress-text'), progressTimer = null, rowSeen = {};
+  function badgeNode(item) {
+    var node = document.createElement('span');
+    node.className = 'b ' + item.kind + ' pop';
+    node.textContent = item.text;
+    node.title = item.text;
+    return node;
+  }
+  function checkingNode(label) {
+    var node = document.createElement('span');
+    node.className = 'checking';
+    node.textContent = label;
+    return node;
+  }
+  function paint(cell, nodes) { cell.replaceChildren.apply(cell, nodes); }
+  function applyProgress(d) {
+    progressBox.hidden = false;
+    progressFill.style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + '%';
+    progressText.textContent = fmt(I18N.live_progress, { done: d.done, total: d.total });
+    Object.keys(d.containers).forEach(function (ctid) {
+      var c = d.containers[ctid], row = document.querySelector('[data-ctid="' + ctid + '"]');
+      if (!row || c.status !== 'running') return;
+      var sysCell = row.querySelector('.sys-cell'), appCell = row.querySelector('.app-cell');
+      var seen = rowSeen[ctid] || (rowSeen[ctid] = {});
+      row.classList.toggle('is-queued', c.steps.system === 'queued');
+      if (c.steps.system === 'running' && seen.system !== 'running') paint(sysCell, [checkingNode(I18N.step_system)]);
+      if (c.steps.system === 'done' && seen.system !== 'done' && c.sys) paint(sysCell, [badgeNode(c.sys)]);
+      seen.system = c.steps.system;
+      if (c.steps.app !== 'queued') {
+        var appKey = c.steps.app + '/' + c.steps.docker + '/' + JSON.stringify(c.apps || []);
+        if (seen.app !== appKey) {
+          var nodes = (c.apps || []).map(badgeNode);
+          if (c.steps.app === 'running') nodes.push(checkingNode(I18N.step_app));
+          else if (c.steps.docker === 'running') nodes.push(checkingNode(I18N.step_docker));
+          if (nodes.length) paint(appCell, nodes);
+          seen.app = appKey;
+        }
+      }
+      var finished = c.steps.system === 'done' && c.steps.app === 'done' && c.steps.docker === 'done';
+      if (finished && c.pending && !seen.flashed) { row.classList.add('flash'); seen.flashed = true; }
+    });
+  }
+  function pullProgress() {
+    fetch('/api/progress').then(function (r) { return r.json(); }).then(function (d) {
+      if (d.checked_at !== lastCheck) {  // the report is complete: show the final, re-sorted page
+        clearInterval(progressTimer);
+        setTimeout(reloadKeepingConsole, 900);
+      } else if (d.active) {
+        startProgress();
+        applyProgress(d);
+      }
+    }).catch(function () {});
+  }
+  function startProgress() { if (!progressTimer) { progressTimer = setInterval(pullProgress, 1000); pullProgress(); } }
+  pullProgress();  // a collection may already be running (daily timer, or started from another tab)
 
   btn.addEventListener('click', function () {
     btn.disabled = true;

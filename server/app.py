@@ -2,7 +2,6 @@
 import hmac
 import json
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,10 +15,12 @@ STATE_FILE = Path(os.environ.get("LXC_WATCH_DATA", "data")) / "state.json"
 REFRESH_FILE = STATE_FILE.with_name("refresh.json")
 JOB_FILE = STATE_FILE.with_name("job.json")
 LOG_FILE = STATE_FILE.with_name("job.log")
+PROGRESS_FILE = STATE_FILE.with_name("progress.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
-ADMIN_PASSWORD = os.environ.get("LXC_WATCH_ADMIN_PASSWORD", "")
 JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps"}
 LOG_MAX_BYTES = 1_000_000
+PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
+CHECK_STEPS = ("system", "app", "docker")
 JOB_MAX_AGE_H = 3
 STALE_HOURS = 36
 UPGRADABLE_OS = ("debian", "ubuntu", "alpine")
@@ -97,14 +98,6 @@ def require_token():
         api_error(401, "unauthorized", "invalid token")
 
 
-def require_admin():
-    if not ADMIN_PASSWORD:
-        api_error(503, "password_not_set", "LXC_WATCH_ADMIN_PASSWORD is not set")
-    if not same_secret(request.headers.get("X-Admin-Password", ""), ADMIN_PASSWORD):
-        time.sleep(1)  # slows down password guessing
-        api_error(401, "bad_password", "wrong administration password")
-
-
 @app.errorhandler(HTTPException)
 def json_errors(error):
     if error.response is not None:
@@ -155,8 +148,17 @@ def system_badge(ct, tr):
     return tr.plural("b_packages", n), "w"
 
 
-def app_badges(ct, tr):
-    """Badges of the application column: the tracked application and/or the Docker images."""
+def pending_flags(ct):
+    """(system packages pending, application update pending, Docker images with an update) of a container."""
+    images = [i for i in ct.get("docker") or [] if not i.get("local")]
+    return (ct.get("os_updates") or 0) > 0, bool((ct.get("app") or {}).get("update")), [i for i in images if i.get("update")]
+
+
+def app_badges(ct, tr, final=True):
+    """Badges of the application column: the tracked application and/or the Docker images.
+
+    With final=False (a check still running) a container without anything to show yet gets no badge,
+    instead of the "not tracked" placeholder."""
     if ct["status"] != "running":
         return []
     badges = []
@@ -181,7 +183,7 @@ def app_badges(ct, tr):
             badges.append((tr.plural("b_docker_unchecked", len(unchecked), total=len(images)), "n"))
         else:
             badges.append((tr.plural("b_docker_ok", len(images)), "s"))
-    return badges or [(tr("b_app_untracked"), "n")]
+    return badges or ([(tr("b_app_untracked"), "n")] if final else [])
 
 
 def build_view(state, tr):
@@ -190,9 +192,7 @@ def build_view(state, tr):
         app_info = ct.get("app") or {}
         images = [i for i in ct.get("docker") or [] if not i.get("local")]
         sys_text, sys_kind = system_badge(ct, tr)
-        sys_pending = (ct.get("os_updates") or 0) > 0
-        docker_pending = [i for i in images if i.get("update")]
-        app_pending = bool(app_info.get("update"))
+        sys_pending, app_pending, docker_pending = pending_flags(ct)
         rows.append({
             **ct,
             "packages": ct.get("packages") or [],
@@ -210,6 +210,7 @@ def build_view(state, tr):
     checked = datetime.fromisoformat(state["checked_at"])
     age_h = (datetime.now(timezone.utc) - checked).total_seconds() / 3600
     job = load_job()
+    names = {ct["ctid"]: ct["name"] for ct in state["containers"]}
     collector_version = state.get("collector_version")
     return {
         "host": state.get("host", ""),
@@ -218,12 +219,12 @@ def build_view(state, tr):
         "stale": age_h > STALE_HOURS,
         "stale_hours": STALE_HOURS,
         "refreshing": refresh_requested_at() is not None,
-        "actions_enabled": bool(ADMIN_PASSWORD),
         "upgradable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in upgradable_containers(state)],
         "app_updatable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in app_updatable_containers(state)],
         "backup_storage": state.get("backup_storage"),
         "job": job,
         "job_active": job_is_active(job),
+        "job_containers": [{"ctid": ctid, "name": names.get(ctid, "")} for ctid in (job or {}).get("ctids", [])],
         "pending": pending,
         "others": others,
         "total": len(running),
@@ -292,11 +293,91 @@ def api_report():
     except ValueError:
         api_error(400, "invalid_date", "invalid date")
     write_json(STATE_FILE, report)
+    PROGRESS_FILE.unlink(missing_ok=True)  # the collection is complete: the live view is over
     # A request made while the collector was running is not covered by this report and stays pending.
     requested = refresh_requested_at()
     if requested and requested <= started:
         REFRESH_FILE.unlink(missing_ok=True)
     return jsonify(ok=True, containers=len(report["containers"]))
+
+
+def load_progress():
+    """Progress of the collection in progress, or None (no collection, or it stopped sending events)."""
+    progress = read_json(PROGRESS_FILE)
+    if not progress:
+        return None
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(progress["updated_at"])
+    return progress if age.total_seconds() < PROGRESS_MAX_AGE_S else None
+
+
+def apply_progress_events(progress, events):
+    """Merge the collector's events: "start" lists the containers, "step" reports a step of one container."""
+    for event in events:
+        try:
+            if event.get("type") == "start":
+                progress["containers"] = {}
+                for ct in event.get("containers", []):
+                    running = ct.get("status") == "running"
+                    progress["containers"][str(ct["ctid"])] = {
+                        "ctid": ct["ctid"], "name": ct.get("name", ""), "status": ct.get("status", ""),
+                        "steps": {step: "queued" if running else "done" for step in CHECK_STEPS}, "data": {}}
+            elif event.get("type") == "step":
+                entry = progress["containers"].get(str(event.get("ctid")))
+                if entry and event.get("step") in CHECK_STEPS and event.get("state") in ("running", "done"):
+                    entry["steps"][event["step"]] = event["state"]
+                    if isinstance(event.get("data"), dict):
+                        entry["data"].update(event["data"])
+        except (AttributeError, KeyError, TypeError):
+            continue  # a malformed event must not break the others
+
+
+@app.post("/api/progress")
+def api_progress_post():
+    require_token()
+    body = request.get_json(silent=True) or {}
+    run, events = str(body.get("run", "")), body.get("events")
+    if not run or not isinstance(events, list):
+        api_error(400, "invalid_progress", "invalid progress")
+    state = load_state()
+    if state and state.get("started_at") == run:
+        return jsonify(ok=True, ignored=True)  # this collection is already committed: late events are dropped
+    progress = read_json(PROGRESS_FILE)
+    if not progress or progress.get("run") != run:
+        progress = {"run": run, "containers": {}}
+    apply_progress_events(progress, events)
+    progress["updated_at"] = now_iso()
+    write_json(PROGRESS_FILE, progress)
+    return jsonify(ok=True)
+
+
+@app.get("/api/progress")
+def api_progress_get():
+    """Live view of a collection: step of every container, with the badges already rendered and translated."""
+    tr = translator()
+    state = load_state()
+    result = {"checked_at": state["checked_at"] if state else None}
+    progress = load_progress()
+    if not progress:
+        return jsonify(active=False, **result)
+    containers, finished_count = {}, 0
+    for key, entry in progress["containers"].items():
+        steps, ct = entry["steps"], {"status": entry["status"], **entry["data"]}
+        finished = all(step == "done" for step in steps.values())
+        finished_count += finished
+        item = {"steps": steps, "status": entry["status"]}
+        if entry["status"] == "running":
+            if steps["system"] == "done":
+                text, kind = system_badge(ct, tr)
+                item["sys"] = {"text": text, "kind": kind}
+            if steps["app"] == "done":
+                item["apps"] = [{"text": text, "kind": kind}
+                                for text, kind in app_badges(ct, tr, final=steps["docker"] == "done")]
+            if finished:
+                sys_pending, app_pending, docker_pending = pending_flags(ct)
+                item["pending"] = bool(sys_pending or app_pending or docker_pending)
+        containers[key] = item
+    return jsonify(active=True, run=progress["run"], done=finished_count, total=len(containers),
+                   containers=containers, **result)
 
 
 @app.post("/api/refresh")
@@ -315,7 +396,8 @@ def api_refresh_pending():
 
 @app.post("/api/actions")
 def api_actions():
-    require_admin()
+    # No password: access control belongs to the network or a reverse proxy. The body must be JSON, which a
+    # cross-site form cannot send (and a cross-site fetch would need a CORS preflight this service never answers).
     body = request.get_json(silent=True) or {}
     action = body.get("action")
     if action not in JOB_ACTIONS:

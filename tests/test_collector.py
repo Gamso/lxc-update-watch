@@ -135,3 +135,137 @@ def test_stream_process_reports_the_exit_code_and_timeouts():
 
 def test_collector_version_comes_from_the_version_file():
     assert c.VERSION == open(c.Path(__file__).parent.parent / "VERSION", encoding="utf-8").read().strip()
+
+
+# ---------------------------------------------------------------- progress reporting
+
+class Recorder:
+    def __init__(self):
+        self.events = []
+
+    def event(self, **fields):
+        self.events.append(fields)
+
+
+def test_collect_one_reports_every_step_in_order(monkeypatch):
+    monkeypatch.setattr(c, "os_updates", lambda ctid: ("debian", 2, ["a", "b"]))
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, ""))
+    monkeypatch.setattr(c, "auto_app_status", lambda *a: {"name": "App", "installed": "1", "latest": "1", "update": False})
+    monkeypatch.setattr(c, "docker_status", lambda *a: [{"image": "x", "update": False}])
+    recorder = Recorder()
+    ct = c.collect_one(("100", "running", "app"), {}, {}, recorder)
+    assert [(e["step"], e["state"]) for e in recorder.events] == [
+        ("system", "running"), ("system", "done"), ("app", "running"), ("app", "done"), ("docker", "running"), ("docker", "done")]
+    system_done = recorder.events[1]["data"]
+    assert system_done["os_updates"] == 2 and system_done["helper_script"] is True
+    assert recorder.events[3]["data"]["app"]["name"] == "App" and recorder.events[5]["data"]["docker"][0]["image"] == "x"
+    assert ct["os_updates"] == 2 and ct["app"]["name"] == "App"
+
+
+def test_collect_one_reports_nothing_for_a_stopped_container():
+    recorder = Recorder()
+    assert c.collect_one(("103", "stopped", "idle"), {}, {}, recorder) == {"ctid": 103, "name": "idle", "status": "stopped"}
+    assert recorder.events == []
+
+
+def test_progress_reporter_sends_batches_and_retries(monkeypatch):
+    sent, failures = [], [True]
+
+    def fake_call(config, method, path, body=None, timeout=15):
+        if failures:
+            failures.clear()
+            raise OSError("server down")
+        sent.append((path, body))
+
+    monkeypatch.setattr(c, "server_call", fake_call)
+    reporter = c.ProgressReporter({}, "run-1")
+    reporter.event(type="start", containers=[])
+    reporter.close()          # first flush fails, the final one delivers
+    reporter._flush()
+    assert sent and sent[0][0] == "/api/progress" and sent[0][1]["run"] == "run-1"
+    assert sent[0][1]["events"][0]["type"] == "start"
+
+
+# ---------------------------------------------------------------- requests made from the page
+
+def pending_state(monkeypatch, pending):
+    ran = []
+    monkeypatch.setattr(c, "server_call", lambda *a, **k: pending)
+    monkeypatch.setattr(c, "run_job", lambda config, job: ran.append(job["action"]))
+    return ran
+
+
+def test_nothing_requested_means_nothing_to_do(monkeypatch):
+    ran = pending_state(monkeypatch, {"refresh": False, "job": None})
+    assert c.handle_requests({}) is False and ran == []
+
+
+def test_a_check_request_runs_a_collection(monkeypatch):
+    ran = pending_state(monkeypatch, {"refresh": True, "job": None})
+    assert c.handle_requests({}) is True and ran == []
+
+
+def test_refreshing_the_pve_scripts_does_not_trigger_a_check(monkeypatch):
+    ran = pending_state(monkeypatch, {"refresh": False, "job": {"action": "update_pve_scripts"}})
+    assert c.handle_requests({}) is False and ran == ["update_pve_scripts"]
+
+
+def test_updates_are_followed_by_a_check(monkeypatch):
+    # the service asks for the check itself when it records a system or application update
+    ran = pending_state(monkeypatch, {"refresh": True, "job": {"action": "update_apps"}})
+    assert c.handle_requests({}) is True and ran == ["update_apps"]
+
+
+def test_an_unreachable_service_is_not_an_error(monkeypatch):
+    def down(*args, **kwargs):
+        raise OSError("down")
+    monkeypatch.setattr(c, "server_call", down)
+    assert c.handle_requests({}) is False
+
+
+# ---------------------------------------------------------------- console per container
+
+def test_finish_marker_is_recognizable_and_colored():
+    shipper = Shipper()
+    c.finish(shipper, 101, True)
+    c.finish(shipper, 122, False, "boom")
+    assert "[CT 101] \x1b[32;1m== finished: ok ==\x1b[0m\n" in shipper.text
+    assert "[CT 122] boom\n" in shipper.text and "[CT 122] \x1b[31;1m== finished: failed ==\x1b[0m\n" in shipper.text
+
+
+def test_banner_art_is_dropped_but_text_is_kept():
+    art = r"print(r'  / /___/   / /___  _  __'); print(r' /_____/_/|_\____/  \____/ .___/'); print('Selected containers: 101')"
+    shipper = Shipper()
+    c.stream_process(python_command(art), "[CT 101] ", shipper, 20)
+    assert shipper.text == "[CT 101] Selected containers: 101\x1b[0m\n"
+
+
+def test_system_update_ends_each_container_with_a_marker(monkeypatch):
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (0, "done", False))
+    shipper = Shipper()
+    assert c.upgrade_one(101, "app", shipper)["ok"] is True
+    assert "== finished: ok ==" in shipper.text
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (124, "", False))
+    shipper = Shipper()
+    assert c.upgrade_one(101, "app", shipper)["ok"] is False
+    assert "timed out after 30 minutes" in shipper.text and "== finished: failed ==" in shipper.text
+
+
+def test_skipped_containers_are_closed_in_the_console(monkeypatch):
+    monkeypatch.setattr(c, "list_containers", lambda: [("7", "running", "other")])
+    shipper = Shipper()
+    results = c.upgrade_containers([5], {"upgrade_workers": 1}, shipper)
+    assert results[0]["ok"] is False
+    assert "[CT 5] container stopped or not found" in shipper.text and "[CT 5] \x1b[31;1m== finished: failed" in shipper.text
+
+
+def test_application_update_closes_every_container(monkeypatch):
+    monkeypatch.setattr(c, "cached_fetch", lambda *a, **k: "echo script")
+    monkeypatch.setattr(c, "list_containers", lambda: [("100", "running", "a"), ("102", "running", "b")])
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0 if int(ctid) == 100 else 1, ""))
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (0, "updated", False))
+    shipper = Shipper()
+    results = c.update_apps({"ctids": [100, 102], "backup": False}, {"app_update_workers": 1}, shipper)
+    assert [r["ok"] for r in results] == [True, False]
+    assert "[CT 100] \x1b[32;1m== finished: ok" in shipper.text          # updated
+    assert "[CT 102] stopped, or no update command" in shipper.text and "[CT 102] \x1b[31;1m== finished: failed" in shipper.text

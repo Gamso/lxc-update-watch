@@ -6,8 +6,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
+### Added
+- Options menu (gear icon): language selector and the *Back up before updating applications* choice, which is
+  remembered by the browser.
+- Console per container: one tab per container with its state (waiting, running, ok, failed), a color per
+  container on the `[CT n]` prefixes in the *All* view, and the ASCII-art banners of the official scripts filtered
+  out. The console stays open on the same tab when the page reloads at the end of a job.
+- Live check: when a check runs, the collector reports each step of each container (system packages, application
+  version, Docker images) and the page animates every row as results arrive, with a progress bar. The final report
+  reloads the page with the sorted result.
+
 ### Changed
+- The *Refresh PVE scripts* button moved under *Check now*, at the right of the page.
 - The minimum supported Python version is 3.13 (the version Proxmox VE 9 ships), and the automated tests run on it.
+
+### Fixed
+- Refreshing the PVE scripts no longer triggers a full check of the containers afterwards; only system and
+  application updates are followed by a check.
+- The collector's one-minute poll no longer fails when the service drops the connection.
+
+### Removed
+- The administration password: the action buttons no longer ask for anything. `LXC_WATCH_ADMIN_PASSWORD` is ignored
+  and `deploy.ps1 -Action password` is gone. Protect the page with the network or a reverse proxy instead (see the
+  security notes in the README).
 
 ## [0.1.0] - 2026-10-31
 
@@ -30,5 +53,6 @@ First public release.
 - Project versioning (`VERSION`, changelog, versions shown in the page footer, in the report and by `deploy.ps1`)
   and an automated test suite.
 
-[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Gamso/lxc-update-watch/releases/tag/v0.1.0

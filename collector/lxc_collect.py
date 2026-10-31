@@ -455,14 +455,64 @@ def auto_app_status(ctid, name, config, cache):
     return None
 
 
-def collect_one(entry, config, cache):
+class ProgressReporter:
+    """Tells the web page what the collection is doing, step by step, so that it can animate each container.
+
+    Best effort: events are sent in the background, once every half second, and the collection never waits for them."""
+
+    MAX_PENDING = 2000
+
+    def __init__(self, config, run_id):
+        self.config, self.run_id = config, run_id
+        self.lock = threading.Lock()
+        self.pending = []
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def event(self, **fields):
+        with self.lock:
+            self.pending.append(fields)
+
+    def _flush(self):
+        with self.lock:
+            events, self.pending = self.pending, []
+        if not events:
+            return
+        try:
+            server_call(self.config, "POST", "/api/progress", {"run": self.run_id, "events": events}, timeout=5)
+        except (urllib.error.URLError, ValueError, TimeoutError, OSError, KeyError):
+            with self.lock:
+                self.pending = (events + self.pending)[-self.MAX_PENDING:]  # retried on the next pass
+
+    def _loop(self):
+        while not self.stop.wait(0.5):
+            self._flush()
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=5)
+        self._flush()
+
+
+def report_step(progress, ctid, step, state, data=None):
+    if progress:
+        progress.event(type="step", ctid=int(ctid), step=step, state=state, data=data or {})
+
+
+def collect_one(entry, config, cache, progress=None):
     ctid, status, name = entry
     ct = {"ctid": int(ctid), "name": name, "status": status}
     if status != "running":
         return ct
+    report_step(progress, ctid, "system", "running")
     ct["os"], ct["os_updates"], ct["packages"] = os_updates(ctid)
     rc, _ = pct_exec(ctid, "test -f /usr/bin/update")
     ct["helper_script"] = rc == 0
+    report_step(progress, ctid, "system", "done",
+                {k: ct[k] for k in ("os", "os_updates", "packages", "helper_script")})
+
+    report_step(progress, ctid, "app", "running")
     app_cfg = config.get("apps", {}).get(ctid)
     if app_cfg and "apt_package" in app_cfg:
         ct["app"] = apt_app_status(ctid, app_cfg, ct["packages"])
@@ -472,9 +522,13 @@ def collect_one(entry, config, cache):
         auto = auto_app_status(ctid, name, config, cache)
         if auto:
             ct["app"] = auto
+    report_step(progress, ctid, "app", "done", {"app": ct["app"]} if "app" in ct else None)
+
+    report_step(progress, ctid, "docker", "running")
     docker = docker_status(ctid, config.get("registry_auth", {}), cache)
     if docker:
         ct["docker"] = docker
+    report_step(progress, ctid, "docker", "done", {"docker": docker} if docker else None)
     return ct
 
 
@@ -493,11 +547,21 @@ CSI_RE = re.compile(r"\x1b\[[0-9;?]*([@-~])")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f]|\x1b(?!\[)[()]?[A-Za-z0-9]?")
 
 
+READABLE_RE = re.compile(r"[^\W_]")  # a letter or a digit: lines without one are banner art and frames
+
+
 def clean_line(raw):
     """Keep colors (SGR) but drop cursor moves, erasures and spinners: a \\r rewrites the current line."""
     text = CSI_RE.sub(lambda m: m.group(0) if m.group(1) == "m" else "", raw.rstrip("\n"))
     segments = [s for s in text.split("\r") if s.strip()]
     return CONTROL_RE.sub("", segments[-1]) if segments else ""
+
+
+def finish(shipper, ctid, ok, note=""):
+    """Last lines of a container in the console. The page recognizes the marker and shows the container as done."""
+    if note:
+        shipper.write(f"[CT {ctid}] {note}\n")
+    shipper.write(f"[CT {ctid}] \x1b[{'32' if ok else '31'};1m== finished: {'ok' if ok else 'failed'} ==\x1b[0m\n")
 
 
 class LogShipper:
@@ -552,8 +616,8 @@ def stream_process(cmd, prefix, shipper, timeout, env=None):
     try:
         for raw in iter(proc.stdout.readline, b""):
             line = clean_line(raw.decode("utf-8", "replace"))
-            if not line.strip():
-                continue
+            if not READABLE_RE.search(CSI_RE.sub("", line)):
+                continue  # nothing readable: the ASCII-art banner of the official scripts, frames, blank lines
             shipper.write(f"{prefix}{line}\x1b[0m\n")
             last = CSI_RE.sub("", line).strip()
             saw_error = saw_error or "[ERROR]" in line
@@ -569,20 +633,25 @@ def upgrade_one(ctid, name, shipper):
     code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", UPGRADE_SCRIPT],
                                    f"[CT {ctid}] ", shipper, 1800)
     if code == 124:
+        finish(shipper, ctid, False, "timed out after 30 minutes")
         return {"label": label, "ok": False, "message": "timed out after 30 minutes"}
+    finish(shipper, ctid, code == 0)
     return {"label": label, "ok": code == 0, "message": last[:200]}
 
 
 def upgrade_containers(ctids, config, shipper):
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
-    results, todo = [], []
+    results, todo, skipped = [], [], []
     for ctid in ctids:
         if ctid in running:
             todo.append((ctid, running[ctid]))
         else:
             results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
+            skipped.append(ctid)
     workers = int(config.get("upgrade_workers", 4))
     shipper.write(f"System update of {len(todo)} container(s), {workers} in parallel\n")
+    for ctid in skipped:
+        finish(shipper, ctid, False, "container stopped or not found")
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results += list(pool.map(lambda t: upgrade_one(*t, shipper), todo))
     return sorted(results, key=lambda r: r["label"])
@@ -597,7 +666,7 @@ def update_apps(job, config, shipper):
     if job.get("backup") and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
-    results, todo = [], []
+    results, todo, skipped = [], [], []
     for ctid in job["ctids"]:
         has_update = ctid in running and pct_exec(ctid, "test -f /usr/bin/update")[0] == 0
         if has_update:
@@ -605,10 +674,13 @@ def update_apps(job, config, shipper):
         else:
             results.append({"label": f"CT {ctid}", "ok": False,
                             "message": "stopped, or no update command (container not created by a helper script)"})
+            skipped.append(ctid)
     workers = int(config.get("app_update_workers", 2))
     backup_note = f", backing up to {storage} first" if job.get("backup") else ", no backup"
     shipper.write(f"Application update of {len(todo)} container(s) with the official script "
                   f"({workers} in parallel{backup_note})\n")
+    for ctid in skipped:
+        finish(shipper, ctid, False, "stopped, or no update command (container not created by a helper script)")
 
     def one(item):
         ctid, name = item
@@ -620,8 +692,10 @@ def update_apps(job, config, shipper):
         code, last, saw_error = stream_process(["bash", "-c", script], f"[CT {ctid}] ", shipper, 3600, env)
         label = f"CT {ctid} {name}"
         if code == 124:
+            finish(shipper, ctid, False, "timed out after one hour")
             return {"label": label, "ok": False, "message": "timed out after one hour"}
         ok = code == 0 and not saw_error
+        finish(shipper, ctid, ok)
         return {"label": label, "ok": ok, "message": (last if ok else (last or f"exit code {code}"))[:200]}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -710,6 +784,20 @@ def run_job(config, job):
 
 # ---------------------------------------------------------------- entry point
 
+def handle_requests(config):
+    """Run the job requested from the web page, if any. Returns True when a full check must follow.
+
+    The service asks for that check itself (a refresh request) when the job changes the containers, i.e. after a
+    system or application update; refreshing the PVE scripts leaves them untouched, so no check follows it."""
+    try:
+        pending = server_call(config, "GET", "/api/jobs/pending", timeout=10)
+    except (OSError, ValueError):  # unreachable service, dropped connection, reply that is not JSON
+        return False
+    if pending.get("job"):
+        run_job(config, pending["job"])
+    return bool(pending.get("refresh"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
@@ -738,20 +826,19 @@ def main():
         print(f"{len(slugs)} script(s) would be refreshed:", ", ".join(sorted(slugs)))
         return
 
-    if args.if_requested:
-        try:
-            pending = server_call(config, "GET", "/api/jobs/pending", timeout=10)
-        except (urllib.error.URLError, ValueError, TimeoutError):
-            return
-        if not pending.get("refresh") and not pending.get("job"):
-            return
-        if pending.get("job"):
-            run_job(config, pending["job"])
+    if args.if_requested and not handle_requests(config):
+        return
 
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cache = {}
+    to_check = list_containers()
+    progress = None if args.dry_run else ProgressReporter(config, started_at)
+    if progress:
+        progress.event(type="start", containers=[{"ctid": int(c[0]), "name": c[2], "status": c[1]} for c in to_check])
     with ThreadPoolExecutor(max_workers=4) as pool:
-        containers = list(pool.map(lambda e: collect_one(e, config, cache), list_containers()))
+        containers = list(pool.map(lambda e: collect_one(e, config, cache, progress), to_check))
+    if progress:
+        progress.close()  # every event must be delivered before the report ends the live view
     containers.sort(key=lambda c: c["ctid"])
     report = {
         "host": socket.gethostname(),

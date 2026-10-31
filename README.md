@@ -7,9 +7,11 @@ and can apply them from the page, with a live console and an optional backup fir
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
-- Optional action buttons: system update (parallel), application update with the official
+- Action buttons: system update (parallel), application update with the official
   *PVE LXC Apps Update* script (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
+- Live check: **Check now** animates each container row while its system packages, application version and Docker
+  images are being checked, with a progress bar.
 - Pull-based design: the Proxmox host never accepts incoming connections.
 
 ## How it works
@@ -62,7 +64,7 @@ If PowerShell refuses to run the script: `powershell -ExecutionPolicy Bypass -Fi
 - Replaced files are backed up on Proxmox (`.bak-YYYYMMDDHHMMSS`, three kept). Your
   `/etc/lxc-update-watch.json` is never overwritten: only the token (aligned with the service's) and missing keys
   are added, with a backup.
-- Other actions: `collector`, `service`, `config`, `password`, `run-now`, `probe-pve`, `logs`.
+- Other actions: `collector`, `service`, `config`, `run-now`, `probe-pve`, `logs`.
 
 ### By hand
 
@@ -99,7 +101,7 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `github_token` | Optional. Raises the GitHub API rate limit (60 requests/hour without it). |
 | `auto_apps` | `true` by default. `false` disables the automatic helper-script detection. |
 | `apps` | Manual entries, keyed by CTID. They take precedence over the automatic detection (see below). |
-| `backup_storage` | Proxmox storage for the *Back up first* option (`pvesm status --content backup` lists them). Without it the option is hidden. |
+| `backup_storage` | Proxmox storage for the *Back up before updating applications* option (`pvesm status --content backup` lists them). Without it the option is unavailable. |
 | `pve_scripts_local` | `{"url": "http://<ct-ip>:3000"}`, needed for the *Refresh PVE scripts* button. |
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
@@ -110,7 +112,6 @@ Environment of the web service (`/etc/lxc-update-watch.env`):
 | Variable | Meaning |
 | --- | --- |
 | `LXC_WATCH_TOKEN` | Shared secret used by the collector (required). |
-| `LXC_WATCH_ADMIN_PASSWORD` | Enables the action buttons. Without it the page is read-only. |
 | `LXC_WATCH_DATA` | State directory (`/var/lib/lxc-update-watch` with the provided unit). |
 
 ### Automatic detection of applications
@@ -152,27 +153,31 @@ Only needed for what the automatic detection does not cover.
 
 ## Action buttons
 
-They appear only when `LXC_WATCH_ADMIN_PASSWORD` is set. The password is asked in the browser (masked) and kept for
-the tab's lifetime. A click records a request on the service; the host's timer picks it up within a minute, runs it
-and streams the output to the page's console.
+A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
+output to the page's console, with one tab per container (waiting, running, ok or failed) and a color per
+container in the *All* view. There is no password: anyone who can open the page can start them (see the security
+notes below).
 
 - **Update system** runs `apt-get upgrade` (never `dist-upgrade`) or `apk upgrade` in containers with pending
   packages, in parallel. Services may restart, Docker included.
 - **Update applications** runs the official `tools/pve/update-apps.sh` unattended, one instance per container, for
   containers created by a helper script whose application has an update. With `backup_storage` set, the
-  *Back up first* box runs a `vzdump` before each update. Containers that need a reboot are listed in the console.
+  *Back up before updating applications* option of the Options menu (gear icon, remembered by the browser) runs a
+  `vzdump` before each update. Containers that need a reboot are listed in the console.
   Add-ons have no `update` command: the page shows the command to run inside the container.
-- **Refresh PVE scripts** reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
+- **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 
-Security notes: the page has no login for reading, and the console output is readable by anyone who can open the
-page. Keep it on your local network or behind an authenticating proxy. The administration password travels in
-clear text unless you serve the page over HTTPS.
+Security notes: **the page has no login**. Anyone who can open it can read the state and the console output, and
+can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the host
+through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and requests
+must be JSON so a cross-site form cannot trigger one. Keep the page on your local network, or put an authenticating
+reverse proxy (Authelia, Cloudflare Access, a VPN...) in front of it before exposing it to the Internet.
 
 ## Languages
 
 The interface is available in English and French. The language is taken from the `lang` cookie (set by the language
-selector at the top right of the page), then from the browser's `Accept-Language`, then defaults to English.
+selector of the Options menu, the gear icon at the top right of the page), then from the browser's `Accept-Language`, then defaults to English.
 Translations live in `server/i18n.py`; adding a language means adding one dictionary to `STRINGS`, its code to
 `SUPPORTED` and its name to `LANGUAGE_NAMES` (a test checks that every key exists in all languages). Technical
 output (console, job results, collector messages) is always in English.
