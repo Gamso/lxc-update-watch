@@ -154,9 +154,11 @@ Only needed for what the automatic detection does not cover.
 
 ## Action buttons
 
-They appear only when `LXC_WATCH_ADMIN_PASSWORD` is set. The password is asked in the browser (masked) and kept for
-the tab's lifetime. A click records a request on the service; the host's timer picks it up within a minute, runs it
-and streams the output to the page's console.
+The system and application update buttons appear only when `LXC_WATCH_ADMIN_PASSWORD` is set. The password is asked
+in the browser (masked) and kept for the tab's lifetime. **Refresh PVE scripts** never asks for it (it only refreshes
+script files and installs nothing in the containers) and works even when no password is set. A click records a
+request on the service; the host's timer picks it up within a minute, runs it and streams the output to the page's
+console.
 
 - **Update system** runs `apt-get upgrade` (never `dist-upgrade`) or `apk upgrade` in containers with pending
   packages, in parallel. Services may restart, Docker included.
@@ -168,7 +170,8 @@ and streams the output to the page's console.
 - **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 
-Security notes: the page has no login for reading, and the console output is readable by anyone who can open the
+Security notes: anyone who can open the page can start *Refresh PVE scripts*. The page has no login for reading, and
+the console output is readable by anyone who can open the
 page. Keep it on your local network or behind an authenticating proxy. The administration password travels in
 clear text unless you serve the page over HTTPS.
 

@@ -104,15 +104,15 @@ summary.line::-webkit-details-marker{display:none}
 <p class="sub" id="sub">{{ t('last_check', host=view.host, when=view.checked_at) }}</p>
 <div class="side">
 <button id="refresh" type="button">{{ t('check_now') }}</button>
-{% if view.actions_enabled %}<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>{% endif %}
+<button id="act-pve" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_pve_scripts') }}</button>
 </div>
 </div>
+<p class="sub" id="msg" aria-live="polite"></p>
 <div id="progress" hidden><div class="track"><div class="fill"></div></div><p class="sub" id="progress-text" aria-live="polite"></p></div>
 {% if view.actions_enabled %}
 <div class="actions">
 <button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
 <button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
-<span class="sub" id="msg"></span>
 </div>
 <dialog id="pw-dialog"><form method="dialog">
 <label for="pw-field">{{ t('admin_password') }}</label>
@@ -215,21 +215,25 @@ summary.line::-webkit-details-marker{display:none}
       field.focus();
     });
   }
+  var PUBLIC_ACTIONS = ['update_pve_scripts'];  // accepted by the service without the administration password
   function act(action, question, extra) {
     if (!window.confirm(question)) return;
+    if (PUBLIC_ACTIONS.indexOf(action) !== -1) { send(action, null, extra); return; }
     password().then(function (pw) { if (pw) send(action, pw, extra); });
   }
   function send(action, pw, extra) {
     msg.textContent = '';
+    var headers = { 'Content-Type': 'application/json' };
+    if (pw) headers['X-Admin-Password'] = pw;
     fetch('/api/actions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
+      headers: headers,
       body: JSON.stringify(Object.assign({ action: action }, extra || {}))
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.status === 401) { try { sessionStorage.removeItem('lxcw_pw'); } catch (e) {} }
         if (!r.ok) throw new Error((body.code && I18N.api_err[body.code]) || body.error || I18N.request_refused);
-        try { sessionStorage.setItem('lxcw_pw', pw); } catch (e) {}
+        if (pw) { try { sessionStorage.setItem('lxcw_pw', pw); } catch (e) {} }
         location.reload();
       });
     }).catch(function (e) { msg.textContent = e.message; });

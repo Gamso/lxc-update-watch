@@ -20,6 +20,9 @@ PROGRESS_FILE = STATE_FILE.with_name("progress.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
 ADMIN_PASSWORD = os.environ.get("LXC_WATCH_ADMIN_PASSWORD", "")
 JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps"}
+# Actions that need no administration password: refreshing the PVE Scripts Local script files installs nothing
+# in the containers, unlike the system and application updates.
+PUBLIC_ACTIONS = {"update_pve_scripts"}
 LOG_MAX_BYTES = 1_000_000
 PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
 CHECK_STEPS = ("system", "app", "docker")
@@ -405,9 +408,10 @@ def api_refresh_pending():
 
 @app.post("/api/actions")
 def api_actions():
-    require_admin()
     body = request.get_json(silent=True) or {}
     action = body.get("action")
+    if action not in PUBLIC_ACTIONS:
+        require_admin()
     if action not in JOB_ACTIONS:
         api_error(400, "unknown_action", "unknown action")
     state = load_state()

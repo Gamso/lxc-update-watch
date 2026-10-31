@@ -324,8 +324,34 @@ def test_pve_scripts_button_sits_under_check_now(web, token_headers, sample_repo
     assert 'id="act-pve"' not in actions and 'id="act-os"' in actions and 'id="act-apps"' in actions
 
 
-def test_pve_scripts_button_needs_the_admin_password(web, token_headers, sample_report, monkeypatch):
+def test_pve_scripts_refresh_needs_no_password(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    response = web.post("/api/actions", json={"action": "update_pve_scripts"})   # no administration password
+    assert response.status_code == 202 and response.get_json()["action"] == "update_pve_scripts"
+    pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
+    assert pending["action"] == "update_pve_scripts" and pending["ctids"] == []
+
+
+def test_the_other_actions_still_need_the_password(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    for action in ("upgrade_os", "update_apps"):
+        assert web.post("/api/actions", json={"action": action}).status_code == 401
+    assert web.post("/api/actions", json={}).status_code == 401                  # nothing is revealed without it
+    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
+
+
+def test_pve_scripts_refresh_works_when_no_password_is_configured(web, token_headers, sample_report, monkeypatch):
     import app as web_app
     monkeypatch.setattr(web_app, "ADMIN_PASSWORD", "")
     post_report(web, token_headers, sample_report)
-    assert 'id="act-pve"' not in web.get("/").get_data(as_text=True)
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="act-pve"' in page and 'id="act-os"' not in page                  # the other buttons stay hidden
+    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
+    assert web.post("/api/actions", json={"action": "upgrade_os"}).get_json()["code"] == "password_not_set"
+
+
+def test_messages_can_be_shown_without_the_action_buttons(web, token_headers, sample_report, monkeypatch):
+    import app as web_app
+    monkeypatch.setattr(web_app, "ADMIN_PASSWORD", "")
+    post_report(web, token_headers, sample_report)
+    assert 'id="msg"' in web.get("/").get_data(as_text=True)   # the script writes errors there

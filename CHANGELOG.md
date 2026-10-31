@@ -16,7 +16,9 @@ All notable changes to this project are documented here. The format follows
   reloads the page with the sorted result.
 
 ### Changed
-- The *Refresh PVE scripts* button moved under *Check now*, at the right of the page.
+- The *Refresh PVE scripts* button moved under *Check now*, at the right of the page, and no longer asks for the
+  administration password (it only refreshes script files). It stays available when no password is set; the system
+  and application update buttons still need it.
 - The minimum supported Python version is 3.13 (the version Proxmox VE 9 ships), and the automated tests run on it.
 
 ## [0.1.0] - 2026-10-31
