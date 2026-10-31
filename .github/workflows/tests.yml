@@ -6,10 +6,12 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    # Pinned so that a new "ubuntu-latest" cannot change the toolchain under our feet.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python-version: ["3.9", "3.12"]
+        # 3.13 is the minimum supported version: it is what Proxmox VE 9 (Debian 13) ships.
+        python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

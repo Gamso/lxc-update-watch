@@ -29,6 +29,14 @@ and can apply them from the page, with a live console and an optional backup fir
   minute for requests, runs them and streams the output back.
 - `deploy.ps1` installs and updates both from a Windows machine (see below).
 
+## Requirements
+
+- Proxmox VE 9 or any host with **Python 3.13 or newer** (Proxmox VE 9 is based on Debian 13, which ships 3.13).
+  The collector uses the standard library only.
+- An LXC with Python 3.13 or newer for the web service (a Debian 13 container works out of the box; Flask and
+  gunicorn are installed in a virtual environment).
+- Python 3.13 is the only version the automated tests run against.
+
 ## Install
 
 ### With `deploy.ps1` (Windows, recommended)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect system and application updates of the LXC containers and send them to the web service.
 
-Run as root on the Proxmox host (it uses `pct`). Python 3.9+, standard library only.
+Run as root on the Proxmox host (it uses `pct`). Python 3.13+, standard library only.
 
   lxc_collect.py              collect, then send the report to the service (server_url of the config)
   lxc_collect.py --dry-run    collect and print the JSON without sending anything
