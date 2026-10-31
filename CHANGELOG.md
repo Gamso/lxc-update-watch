@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- The minimum supported Python version is 3.13 (the version Proxmox VE 9 ships), and the automated tests run on it.
+
 ## [0.1.0] - 2026-10-31
 
 First public release.
