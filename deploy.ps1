@@ -11,7 +11,6 @@
     collector  deploy the collector and its systemd units on the host
     service    deploy the web page in its LXC (first installation included)
     config     create or check /etc/lxc-update-watch.json (token, address, missing keys)
-    password   set the administration password of the action buttons
     dry-run    collect without sending anything and print a summary
     run-now    collect and send the report to the page
     probe-pve  list the scripts PVE Scripts Local would refresh (changes nothing)
@@ -26,7 +25,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('menu', 'ssh-key', 'collector', 'service', 'config', 'password', 'dry-run', 'run-now',
+    [ValidateSet('menu', 'ssh-key', 'collector', 'service', 'config', 'dry-run', 'run-now',
                  'probe-pve', 'status', 'logs', 'update', 'full')]
     [string]$Action = 'menu',
     [string]$ProxmoxHost,
@@ -43,7 +42,6 @@ $SettingsFile = Join-Path $Root 'deploy.settings.json'
 $Version = (Get-Content (Join-Path $Root 'VERSION') -ErrorAction SilentlyContinue | Select-Object -First 1)
 $SshOptions = @('-o', 'ServerAliveInterval=30', '-o', 'StrictHostKeyChecking=accept-new')
 $RemoteStage = '/tmp/lxcw-deploy'
-$AdminPasswordPattern = '^[A-Za-z0-9._@+=:,-]{8,}$'
 
 # Deployed files: local path -> remote path ('host' = Proxmox host, 'ct' = the LXC of the web service)
 $Manifest = @(
@@ -337,32 +335,9 @@ if [ "$CODE" = "200" ]; then echo "The service answers from the host (http://$IP
 if ! grep -q '"backup_storage"' "$CFG"; then
   echo "Backup before application updates: add \"backup_storage\": \"NAME\" to the config. Available backup storages: $(pvesm status --content backup 2>/dev/null | awk 'NR>1{printf "%s ", $1}')"
 fi
-if pct exec $CT -- grep -q '^LXC_WATCH_ADMIN_PASSWORD=.\+' /etc/lxc-update-watch.env; then
-  echo "Administration password: set"
-else
-  echo "Administration password: NOT set (the action buttons stay hidden)"
-fi
 if [ -f /opt/lxc-update-watch/collector/lxc_collect.py ]; then
   systemctl enable --now lxc-collect.timer lxc-collect-poll.timer >/dev/null 2>&1 && echo "Timers enabled" || echo "Timers not enabled (run the 'collector' step?)"
 fi
-'@
-}
-
-function Get-PasswordScript {
-    return Get-CtScript @'
-CT=__CTID__
-IFS= read -r PW
-PW=${PW%$'\r'}
-PW=${PW#$'\xef\xbb\xbf'}
-[[ "$PW" =~ ^[A-Za-z0-9._@+=:,-]{8,}$ ]] || { echo "ERROR: invalid password."; exit 1; }
-set -e
-umask 077
-pct pull $CT /etc/lxc-update-watch.env /tmp/lxcw.env
-{ grep -v '^LXC_WATCH_ADMIN_PASSWORD=' /tmp/lxcw.env || true; printf 'LXC_WATCH_ADMIN_PASSWORD=%s\n' "$PW"; } > /tmp/lxcw.env.new
-pct push $CT /tmp/lxcw.env.new /etc/lxc-update-watch.env --perms 600
-rm -f /tmp/lxcw.env /tmp/lxcw.env.new
-pct exec $CT -- systemctl restart lxc-update-watch
-echo "Administration password saved, service restarted."
 '@
 }
 
@@ -459,20 +434,8 @@ function Test-RemoteExists([string]$Path) {
 function Step-Config {
     Write-Title 'Collector configuration'
     if (-not (Test-RemoteExists "$RemoteStage/collector/config.example.json")) { Send-Files }
-    $lines = Invoke-Remote (Get-ConfigScript)
-    $script:LastConfigOutput = $lines
+    Invoke-Remote (Get-ConfigScript) | Out-Null
     Write-Info "To edit the config by hand: ssh -t $($script:Target) nano /etc/lxc-update-watch.json"
-}
-
-function Step-Password {
-    Write-Title 'Administration password (action buttons)'
-    Write-Info 'At least 8 characters: letters, digits and . _ @ + = : , - (no spaces or $ # " '' \).'
-    $first = ConvertTo-PlainText (Read-Host '  New password' -AsSecureString)
-    $second = ConvertTo-PlainText (Read-Host '  Confirm it' -AsSecureString)
-    if ($first -ne $second) { Write-Warn 'The two entries differ: nothing was changed.'; return }
-    if ($first -notmatch $AdminPasswordPattern) { Write-Warn 'Password rejected: too short or characters not allowed.'; return }
-    Invoke-Remote (Get-PasswordScript) -Stdin $first | Out-Null
-    Write-Ok 'Password saved.'
 }
 
 function Show-DryRunSummary([string[]]$Lines) {
@@ -578,7 +541,6 @@ function Step-Full {
         @{ Name = 'Web page (first installation in the LXC)'; Run = { Step-Service } },
         @{ Name = 'Collector on the Proxmox host'; Run = { Step-Collector } },
         @{ Name = 'Configuration (token, service address)'; Run = { Step-Config } },
-        @{ Name = 'Administration password of the action buttons'; Run = { Step-Password }; When = { $script:LastConfigOutput -match 'NOT set' } },
         @{ Name = 'Dry run (nothing is sent)'; Run = { Step-DryRun } },
         @{ Name = 'First real collection'; Run = { Step-RunNow } }
     )
@@ -604,13 +566,12 @@ function Show-Menu {
         '3'  = @('Deploy the collector (host)', { Step-Collector })
         '4'  = @('Deploy the web page (LXC)', { Step-Service })
         '5'  = @('Configuration (token, address)', { Step-Config })
-        '6'  = @('Administration password', { Step-Password })
-        '7'  = @('Dry run', { Step-DryRun })
-        '8'  = @('Collect and send now', { Step-RunNow })
-        '9'  = @('Test PVE Scripts Local scripts', { Step-ProbePve })
-        '10' = @('Status and deployed files', { Step-Status | Out-Null })
-        '11' = @('Collector logs', { Step-Logs })
-        '12' = @('Update what changed', { Step-Update })
+        '6'  = @('Dry run', { Step-DryRun })
+        '7'  = @('Collect and send now', { Step-RunNow })
+        '8'  = @('Test PVE Scripts Local scripts', { Step-ProbePve })
+        '9'  = @('Status and deployed files', { Step-Status | Out-Null })
+        '10' = @('Collector logs', { Step-Logs })
+        '11' = @('Update what changed', { Step-Update })
         'q'  = @('Quit', $null)
     }
     while ($true) {
@@ -634,7 +595,6 @@ function Main {
         'collector' { Step-Collector }
         'service'   { Step-Service }
         'config'    { Step-Config }
-        'password'  { Step-Password }
         'dry-run'   { Step-DryRun }
         'run-now'   { Step-RunNow }
         'probe-pve' { Step-ProbePve }

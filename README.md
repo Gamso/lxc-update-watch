@@ -7,7 +7,7 @@ and can apply them from the page, with a live console and an optional backup fir
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
-- Optional action buttons: system update (parallel), application update with the official
+- Action buttons: system update (parallel), application update with the official
   *PVE LXC Apps Update* script (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
@@ -64,7 +64,7 @@ If PowerShell refuses to run the script: `powershell -ExecutionPolicy Bypass -Fi
 - Replaced files are backed up on Proxmox (`.bak-YYYYMMDDHHMMSS`, three kept). Your
   `/etc/lxc-update-watch.json` is never overwritten: only the token (aligned with the service's) and missing keys
   are added, with a backup.
-- Other actions: `collector`, `service`, `config`, `password`, `run-now`, `probe-pve`, `logs`.
+- Other actions: `collector`, `service`, `config`, `run-now`, `probe-pve`, `logs`.
 
 ### By hand
 
@@ -112,7 +112,6 @@ Environment of the web service (`/etc/lxc-update-watch.env`):
 | Variable | Meaning |
 | --- | --- |
 | `LXC_WATCH_TOKEN` | Shared secret used by the collector (required). |
-| `LXC_WATCH_ADMIN_PASSWORD` | Enables the action buttons. Without it the page is read-only. |
 | `LXC_WATCH_DATA` | State directory (`/var/lib/lxc-update-watch` with the provided unit). |
 
 ### Automatic detection of applications
@@ -154,11 +153,9 @@ Only needed for what the automatic detection does not cover.
 
 ## Action buttons
 
-The system and application update buttons appear only when `LXC_WATCH_ADMIN_PASSWORD` is set. The password is asked
-in the browser (masked) and kept for the tab's lifetime. **Refresh PVE scripts** never asks for it (it only refreshes
-script files and installs nothing in the containers) and works even when no password is set. A click records a
-request on the service; the host's timer picks it up within a minute, runs it and streams the output to the page's
-console.
+A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
+output to the page's console. There is no password: anyone who can open the page can start them (see the security
+notes below).
 
 - **Update system** runs `apt-get upgrade` (never `dist-upgrade`) or `apk upgrade` in containers with pending
   packages, in parallel. Services may restart, Docker included.
@@ -170,10 +167,11 @@ console.
 - **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 
-Security notes: anyone who can open the page can start *Refresh PVE scripts*. The page has no login for reading, and
-the console output is readable by anyone who can open the
-page. Keep it on your local network or behind an authenticating proxy. The administration password travels in
-clear text unless you serve the page over HTTPS.
+Security notes: **the page has no login**. Anyone who can open it can read the state and the console output, and
+can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the host
+through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and requests
+must be JSON so a cross-site form cannot trigger one. Keep the page on your local network, or put an authenticating
+reverse proxy (Authelia, Cloudflare Access, a VPN...) in front of it before exposing it to the Internet.
 
 ## Languages
 

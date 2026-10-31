@@ -108,56 +108,44 @@ def test_a_request_made_during_a_collection_stays_pending(web, token_headers, sa
 
 # ---------------------------------------------------------------- jobs
 
-def test_actions_need_the_admin_password(web, token_headers, sample_report):
+
+
+
+
+def test_invalid_actions(web, token_headers, sample_report):
+    assert web.post("/api/actions", json={"action": "upgrade_os"}).get_json()["code"] == "no_report"
     post_report(web, token_headers, sample_report)
-    assert web.post("/api/actions", json={"action": "upgrade_os"}).status_code == 401
-    response = web.post("/api/actions", json={"action": "upgrade_os"}, headers={"X-Admin-Password": "wrong"})
-    assert response.status_code == 401 and response.get_json()["code"] == "bad_password"
+    assert web.post("/api/actions", json={"action": "rm -rf"}).get_json()["code"] == "unknown_action"
 
 
-def test_actions_are_disabled_without_a_password(web, token_headers, sample_report, monkeypatch):
-    import app as web_app
+def test_upgrade_and_app_update_target_the_right_containers(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    monkeypatch.setattr(web_app, "ADMIN_PASSWORD", "")
-    response = web.post("/api/actions", json={"action": "upgrade_os"}, headers={"X-Admin-Password": "x"})
-    assert response.status_code == 503 and response.get_json()["code"] == "password_not_set"
-    assert 'id="act-os"' not in web.get("/").get_data(as_text=True)
-
-
-def test_invalid_actions(web, token_headers, admin_headers, sample_report):
-    assert web.post("/api/actions", json={"action": "upgrade_os"}, headers=admin_headers).get_json()["code"] == "no_report"
-    post_report(web, token_headers, sample_report)
-    assert web.post("/api/actions", json={"action": "rm -rf"}, headers=admin_headers).get_json()["code"] == "unknown_action"
-
-
-def test_upgrade_and_app_update_target_the_right_containers(web, token_headers, admin_headers, sample_report):
-    post_report(web, token_headers, sample_report)
-    upgrade = web.post("/api/actions", json={"action": "upgrade_os"}, headers=admin_headers)
+    upgrade = web.post("/api/actions", json={"action": "upgrade_os"})
     assert upgrade.status_code == 202 and upgrade.get_json()["ctids"] == [100, 102]
     pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
     web.post(f"/api/jobs/{pending['id']}/result", json={"results": []}, headers=token_headers)
-    apps = web.post("/api/actions", json={"action": "update_apps"}, headers=admin_headers)
+    apps = web.post("/api/actions", json={"action": "update_apps"})
     assert apps.get_json()["ctids"] == [100]  # 101 has no helper-script command, 102 has no application update
 
 
-def test_backup_needs_a_configured_storage(web, token_headers, admin_headers, sample_report):
+def test_backup_needs_a_configured_storage(web, token_headers, sample_report):
     sample_report["backup_storage"] = None
     post_report(web, token_headers, sample_report)
-    response = web.post("/api/actions", json={"action": "update_apps", "backup": True}, headers=admin_headers)
+    response = web.post("/api/actions", json={"action": "update_apps", "backup": True})
     assert response.status_code == 400 and response.get_json()["code"] == "backup_not_configured"
     assert "backup_storage</code> is not set" in web.get("/").get_data(as_text=True)
 
 
-def test_only_one_job_at_a_time(web, token_headers, admin_headers, sample_report):
+def test_only_one_job_at_a_time(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    assert web.post("/api/actions", json={"action": "upgrade_os"}, headers=admin_headers).status_code == 202
-    again = web.post("/api/actions", json={"action": "update_pve_scripts"}, headers=admin_headers)
+    assert web.post("/api/actions", json={"action": "upgrade_os"}).status_code == 202
+    again = web.post("/api/actions", json={"action": "update_pve_scripts"})
     assert again.status_code == 409 and again.get_json()["code"] == "job_running"
 
 
-def test_full_job_cycle_with_live_log(web, token_headers, admin_headers, sample_report):
+def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    job = web.post("/api/actions", json={"action": "update_apps", "backup": True}, headers=admin_headers).get_json()
+    job = web.post("/api/actions", json={"action": "update_apps", "backup": True}).get_json()
     assert job["backup"] is True
     pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
     assert pending["id"] == job["id"]
@@ -177,14 +165,14 @@ def test_full_job_cycle_with_live_log(web, token_headers, admin_headers, sample_
     page = web.get("/").get_data(as_text=True)
     assert "Application update (with backup)" in page and "finished with errors" in page and "boom" in page
     assert web.get("/api/status").get_json()["job"] == "done"
-    assert web.post("/api/actions", json={"action": "update_pve_scripts"}, headers=admin_headers).status_code == 202
+    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
 
 
-def test_log_is_capped(web, token_headers, admin_headers, sample_report, monkeypatch):
+def test_log_is_capped(web, token_headers, sample_report, monkeypatch):
     import app as web_app
     monkeypatch.setattr(web_app, "LOG_MAX_BYTES", 100)
     post_report(web, token_headers, sample_report)
-    job = web.post("/api/actions", json={"action": "upgrade_os"}, headers=admin_headers).get_json()
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
     for _ in range(5):
         web.post(f"/api/jobs/{job['id']}/log", json={"text": "x" * 60}, headers=token_headers)
     text = web.get(f"/api/jobs/{job['id']}/log").get_json()["text"]
@@ -324,34 +312,27 @@ def test_pve_scripts_button_sits_under_check_now(web, token_headers, sample_repo
     assert 'id="act-pve"' not in actions and 'id="act-os"' in actions and 'id="act-apps"' in actions
 
 
-def test_pve_scripts_refresh_needs_no_password(web, token_headers, sample_report):
+# ---------------------------------------------------------------- actions need no password
+
+def test_actions_run_without_any_password(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    response = web.post("/api/actions", json={"action": "update_pve_scripts"})   # no administration password
-    assert response.status_code == 202 and response.get_json()["action"] == "update_pve_scripts"
-    pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
-    assert pending["action"] == "update_pve_scripts" and pending["ctids"] == []
+    for action, expected in (("update_pve_scripts", []), ("upgrade_os", [100, 102])):
+        response = web.post("/api/actions", json={"action": action})
+        assert response.status_code == 202 and response.get_json()["ctids"] == expected
+        pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
+        web.post(f"/api/jobs/{pending['id']}/result", json={"results": []}, headers=token_headers)
 
 
-def test_the_other_actions_still_need_the_password(web, token_headers, sample_report):
-    post_report(web, token_headers, sample_report)
-    for action in ("upgrade_os", "update_apps"):
-        assert web.post("/api/actions", json={"action": action}).status_code == 401
-    assert web.post("/api/actions", json={}).status_code == 401                  # nothing is revealed without it
-    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
-
-
-def test_pve_scripts_refresh_works_when_no_password_is_configured(web, token_headers, sample_report, monkeypatch):
-    import app as web_app
-    monkeypatch.setattr(web_app, "ADMIN_PASSWORD", "")
+def test_page_has_no_password_prompt(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert 'id="act-pve"' in page and 'id="act-os"' not in page                  # the other buttons stay hidden
-    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
-    assert web.post("/api/actions", json={"action": "upgrade_os"}).get_json()["code"] == "password_not_set"
+    assert "pw-dialog" not in page and "X-Admin-Password" not in page and "sessionStorage" not in page
+    assert all(f'id="{button}"' in page for button in ("act-os", "act-apps", "act-pve")) and 'id="msg"' in page
 
 
-def test_messages_can_be_shown_without_the_action_buttons(web, token_headers, sample_report, monkeypatch):
-    import app as web_app
-    monkeypatch.setattr(web_app, "ADMIN_PASSWORD", "")
+def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    assert 'id="msg"' in web.get("/").get_data(as_text=True)   # the script writes errors there
+    form = web.post("/api/actions", data="action=upgrade_os", content_type="application/x-www-form-urlencoded")
+    assert form.status_code == 400 and form.get_json()["code"] == "unknown_action"  # a cross-site form cannot start one
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"] is None
+

@@ -5,7 +5,6 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TOKEN = "test-token"
-ADMIN = "test-admin-password"
 
 
 @pytest.fixture
@@ -25,8 +24,6 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "LOG_FILE", tmp_path / "job.log")
     monkeypatch.setattr(web_app, "PROGRESS_FILE", tmp_path / "progress.json")
     monkeypatch.setattr(web_app, "TOKEN", TOKEN)
-    monkeypatch.setattr(web_app, "ADMIN_PASSWORD", ADMIN)
-    monkeypatch.setattr(web_app.time, "sleep", lambda _seconds: None)  # no delay on wrong passwords
     return web_app.app.test_client()
 
 
@@ -34,7 +31,3 @@ def web(tmp_path, monkeypatch):
 def token_headers():
     return {"Authorization": f"Bearer {TOKEN}"}
 
-
-@pytest.fixture
-def admin_headers():
-    return {"X-Admin-Password": ADMIN}

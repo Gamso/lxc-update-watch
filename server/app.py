@@ -2,7 +2,6 @@
 import hmac
 import json
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,11 +17,7 @@ JOB_FILE = STATE_FILE.with_name("job.json")
 LOG_FILE = STATE_FILE.with_name("job.log")
 PROGRESS_FILE = STATE_FILE.with_name("progress.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
-ADMIN_PASSWORD = os.environ.get("LXC_WATCH_ADMIN_PASSWORD", "")
 JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps"}
-# Actions that need no administration password: refreshing the PVE Scripts Local script files installs nothing
-# in the containers, unlike the system and application updates.
-PUBLIC_ACTIONS = {"update_pve_scripts"}
 LOG_MAX_BYTES = 1_000_000
 PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
 CHECK_STEPS = ("system", "app", "docker")
@@ -101,14 +96,6 @@ def require_token():
         api_error(503, "token_not_set", "LXC_WATCH_TOKEN is not set")
     if not same_secret(request.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
         api_error(401, "unauthorized", "invalid token")
-
-
-def require_admin():
-    if not ADMIN_PASSWORD:
-        api_error(503, "password_not_set", "LXC_WATCH_ADMIN_PASSWORD is not set")
-    if not same_secret(request.headers.get("X-Admin-Password", ""), ADMIN_PASSWORD):
-        time.sleep(1)  # slows down password guessing
-        api_error(401, "bad_password", "wrong administration password")
 
 
 @app.errorhandler(HTTPException)
@@ -231,7 +218,6 @@ def build_view(state, tr):
         "stale": age_h > STALE_HOURS,
         "stale_hours": STALE_HOURS,
         "refreshing": refresh_requested_at() is not None,
-        "actions_enabled": bool(ADMIN_PASSWORD),
         "upgradable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in upgradable_containers(state)],
         "app_updatable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in app_updatable_containers(state)],
         "backup_storage": state.get("backup_storage"),
@@ -408,10 +394,10 @@ def api_refresh_pending():
 
 @app.post("/api/actions")
 def api_actions():
+    # No password: access control belongs to the network or a reverse proxy. The body must be JSON, which a
+    # cross-site form cannot send (and a cross-site fetch would need a CORS preflight this service never answers).
     body = request.get_json(silent=True) or {}
     action = body.get("action")
-    if action not in PUBLIC_ACTIONS:
-        require_admin()
     if action not in JOB_ACTIONS:
         api_error(400, "unknown_action", "unknown action")
     state = load_state()
