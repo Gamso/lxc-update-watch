@@ -471,4 +471,22 @@ def test_page_lets_you_tick_several_updates(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
     assert 'id="act-picker"' in page and "Choose updates" in page and 'id="act-run"' in page
-    assert "actions: action" in page and "window.confirm" not in page
+    script = web.get("/static/app.js").get_data(as_text=True)
+    assert "actions: action" in script and "window.confirm" not in script
+
+
+def test_style_and_script_are_static_files_with_the_version_in_their_url(web, token_headers, sample_report):
+    import app as web_app
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert f'/static/style.css?v={web_app.VERSION}' in page and f'/static/app.js?v={web_app.VERSION}' in page
+    assert "<style>" not in page and page.count("<script") == 2          # the data for the script, then the script
+    assert web.get("/static/style.css").status_code == 200 and web.get("/static/app.js").status_code == 200
+    assert "window.LXCW" in page and "window.LXCW" in web.get("/static/app.js").get_data(as_text=True)
+
+
+def test_the_page_hands_its_data_to_the_script(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    page = web.get("/").get_data(as_text=True)
+    assert f'"jobId": "{job["id"]}"' in page and '"jobActive": true' in page and '"jobStatus": "pending"' in page

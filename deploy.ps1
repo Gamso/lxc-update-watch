@@ -56,6 +56,8 @@ $Manifest = @(
     @{ Component = 'service';   Where = 'ct';   Local = 'server\auth.py';                  Remote = '/opt/lxc-update-watch/server/auth.py' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\i18n.py';                  Remote = '/opt/lxc-update-watch/server/i18n.py' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\templates\index.html';     Remote = '/opt/lxc-update-watch/server/templates/index.html' }
+    @{ Component = 'service';   Where = 'ct';   Local = 'server\static\app.js';             Remote = '/opt/lxc-update-watch/server/static/app.js' }
+    @{ Component = 'service';   Where = 'ct';   Local = 'server\static\style.css';         Remote = '/opt/lxc-update-watch/server/static/style.css' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\requirements.txt';         Remote = '/opt/lxc-update-watch/server/requirements.txt' }
     @{ Component = 'service';   Where = 'ct';   Local = 'deploy\lxc-update-watch.service'; Remote = '/opt/lxc-update-watch/deploy/lxc-update-watch.service' }
 )
@@ -255,7 +257,7 @@ APP=/opt/lxc-update-watch
 set -e
 pct status $CT | grep -q running || { echo "ERROR: CT $CT is not running."; exit 1; }
 pct exec $CT -- mkdir -p $APP
-pct exec $CT -- sh -c "cd $APP/server 2>/dev/null && for f in app.py auth.py i18n.py templates/index.html; do [ -f \"\$f\" ] && cp -p \"\$f\" \"\$f.bak-$TS\"; done; for f in app.py auth.py i18n.py templates/index.html; do ls -1t \"\$f\".bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f; done; true"
+pct exec $CT -- sh -c "cd $APP/server 2>/dev/null && for f in app.py auth.py i18n.py templates/index.html static/app.js static/style.css; do [ -f \"\$f\" ] && cp -p \"\$f\" \"\$f.bak-$TS\"; done; for f in app.py auth.py i18n.py templates/index.html static/app.js static/style.css; do ls -1t \"\$f\".bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f; done; true"
 chmod -R u=rwX,go=rX "$STAGE"
 tar -C "$STAGE" -cf - server deploy VERSION | pct exec $CT -- tar -C $APP -xf -
 pct exec $CT -- chmod 755 $APP

@@ -19,6 +19,9 @@ All notable changes to this project are documented here. The format follows
 - Options: *Back up before updating applications and Docker stacks* and *Remove old Docker images* (on by default).
 
 ### Changed
+- The page's CSS and JavaScript moved out of `index.html` into `server/static/style.css` and `server/static/app.js`
+  (loaded with the version in the URL, so a new release is never served from an old cache). The page hands its data
+  to the script through one small `window.LXCW` object.
 - No update asks for a confirmation any more: the button starts the job right away (the choices of the Options menu
   still apply).
 - The three update buttons (system, applications, Docker stacks) are replaced by a menu with check boxes and a *Run*
