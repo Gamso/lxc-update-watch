@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-01
+
 ### Added
 - Optional sign-in with OpenID Connect (Authelia, Keycloak, Authentik...), turned on by `OIDC_ISSUER` in the
   web service environment: authorization code flow with PKCE, optional allow-lists of groups or users, a *Sign out*
@@ -74,6 +76,7 @@ First public release.
 - Project versioning (`VERSION`, changelog, versions shown in the page footer, in the report and by `deploy.ps1`)
   and an automated test suite.
 
-[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Gamso/lxc-update-watch/releases/tag/v0.1.0
