@@ -229,8 +229,7 @@ summary.line::-webkit-details-marker{display:none}
   }
 
   var msg = document.getElementById('msg');
-  function act(action, question, extra) {
-    if (!window.confirm(question)) return;
+  function act(action, extra) {
     msg.textContent = '';
     fetch('/api/actions', {
       method: 'POST',
@@ -245,7 +244,7 @@ summary.line::-webkit-details-marker{display:none}
   }
 
   var pve = document.getElementById('act-pve');
-  if (pve) pve.addEventListener('click', function () { act('update_pve_scripts', I18N.js_confirm_pve); });
+  if (pve) pve.addEventListener('click', function () { act('update_pve_scripts'); });
   var backup = document.getElementById('opt-backup');
   if (backup) {  // the choice is remembered by this browser
     try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
@@ -260,24 +259,6 @@ summary.line::-webkit-details-marker{display:none}
       try { localStorage.setItem('lxcw_cleanup', cleanup.checked ? '1' : '0'); } catch (e) {}
     });
   }
-  var runners = {
-    upgrade_os: function (names) {
-      act('upgrade_os', fmt(I18N.js_confirm_os, { names: names }));
-    },
-    update_apps: function (names) {
-      var withBackup = !!(backup && backup.checked);
-      act('update_apps', fmt(I18N.js_confirm_apps, { names: names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
-        { backup: withBackup });
-    },
-    update_docker: function (names) {
-      var withBackup = !!(backup && backup.checked), withCleanup = !!(cleanup && cleanup.checked);
-      act('update_docker', fmt(I18N.js_confirm_docker, {
-        names: names,
-        backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no,
-        cleanup: withCleanup ? I18N.js_cleanup_yes : I18N.js_cleanup_no
-      }), { backup: withBackup, cleanup: withCleanup });
-    }
-  };
   var picker = document.getElementById('act-picker'), run = document.getElementById('act-run');
   if (picker && run) {
     var boxes = [].slice.call(picker.querySelectorAll('input[type=checkbox]')), summary = document.getElementById('act-summary');
@@ -294,15 +275,10 @@ summary.line::-webkit-details-marker{display:none}
       var list = chosen();
       if (!list.length) return;
       picker.open = false;
-      if (list.length === 1) { runners[list[0].value](list[0].dataset.names); return; }
       var values = list.map(function (b) { return b.value; });
       var withBackup = !!(backup && backup.checked) && values.some(function (v) { return v !== 'upgrade_os'; });
       var withCleanup = !!(cleanup && cleanup.checked) && values.indexOf('update_docker') >= 0;
-      act(values, fmt(I18N.js_confirm_chain, {
-        details: list.map(function (b) { return '• ' + b.dataset.label + ': ' + b.dataset.names; }).join('\n'),
-        backup: withBackup ? I18N.js_backup_once : I18N.js_backup_no,
-        cleanup: values.indexOf('update_docker') >= 0 ? (withCleanup ? I18N.js_cleanup_yes : I18N.js_cleanup_no) + '\n' : ''
-      }), { backup: withBackup, cleanup: withCleanup });
+      act(values.length === 1 ? values[0] : values, { backup: withBackup, cleanup: withCleanup });
     });
     refreshPicker();
   }

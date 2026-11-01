@@ -19,6 +19,8 @@ All notable changes to this project are documented here. The format follows
 - Options: *Back up before updating applications and Docker stacks* and *Remove old Docker images* (on by default).
 
 ### Changed
+- No update asks for a confirmation any more: the button starts the job right away (the choices of the Options menu
+  still apply).
 - The three update buttons (system, applications, Docker stacks) are replaced by a menu with check boxes and a *Run*
   button; an entry with nothing to update is greyed out.
 

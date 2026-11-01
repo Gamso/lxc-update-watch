@@ -86,21 +86,6 @@ STRINGS = {
         "d_app_update": "Application update:",
         "version_mismatch": "The collector (v{collector}) and the web service (v{server}) differ: redeploy with deploy.ps1.",
         "date_fmt": "%Y-%m-%d %H:%M",
-        "js_confirm_os": "Update the system packages of these containers, in parallel?\n\n{names}\n\n"
-                         "Services may restart (Docker included).",
-        "js_confirm_apps": "Update the applications of these containers with their community script?\n\n{names}\n\n"
-                           "{backup}\nAffected services will restart.",
-        "js_confirm_pve": "Refresh all scripts downloaded in PVE Scripts Local?\nThis can take several minutes.",
-        "js_backup_yes": "A backup (vzdump) will be made before each update.",
-        "js_backup_no": "No backup will be made.",
-        "js_backup_once": "Each container is backed up once (vzdump) before its first step.",
-        "js_confirm_chain": "Run these updates? Each container goes through them one after the other (system, "
-                            "applications, Docker stacks) and stops at its first failure.\n\n{details}\n\n"
-                            "{backup}\n{cleanup}Affected services will restart.",
-        "js_cleanup_yes": "The old Docker images will be removed afterwards.",
-        "js_cleanup_no": "The old Docker images will be kept.",
-        "js_confirm_docker": "Update the Docker stacks of these containers (docker compose pull, then up -d)?\n\n{names}\n\n"
-                             "{backup}\n{cleanup}\nThe services of the stacks will restart briefly.",
         "err.missing_version_source": "version_file or version_cmd missing",
         "err.installed_version_not_found": "installed version not found",
         "err.latest_version_unavailable": "latest version unavailable",
@@ -196,22 +181,6 @@ STRINGS = {
         "version_mismatch": "Le collecteur (v{collector}) et le service web (v{server}) diffèrent : "
                             "redéploie avec deploy.ps1.",
         "date_fmt": "%d/%m/%Y à %H:%M",
-        "js_confirm_os": "Mettre à jour les paquets système de ces conteneurs, en parallèle ?\n\n{names}\n\n"
-                         "Les services concernés peuvent redémarrer (Docker inclus).",
-        "js_confirm_apps": "Mettre à jour les applications de ces conteneurs avec leur script communautaire ?\n\n"
-                           "{names}\n\n{backup}\nLes services concernés seront redémarrés.",
-        "js_confirm_pve": "Actualiser tous les scripts téléchargés dans PVE Scripts Local ?\n"
-                          "Cela peut durer plusieurs minutes.",
-        "js_backup_yes": "Une sauvegarde (vzdump) sera faite avant chaque mise à jour.",
-        "js_backup_no": "Aucune sauvegarde ne sera faite.",
-        "js_backup_once": "Chaque conteneur est sauvegardé une fois (vzdump) avant sa première étape.",
-        "js_confirm_chain": "Lancer ces mises à jour ? Chaque conteneur les enchaîne l'une après l'autre (système, "
-                            "applications, piles Docker) et s'arrête à son premier échec.\n\n{details}\n\n"
-                            "{backup}\n{cleanup}Les services concernés seront redémarrés.",
-        "js_cleanup_yes": "Les anciennes images Docker seront supprimées ensuite.",
-        "js_cleanup_no": "Les anciennes images Docker seront conservées.",
-        "js_confirm_docker": "Mettre à jour les piles Docker de ces conteneurs (docker compose pull, puis up -d) ?\n\n{names}\n\n"
-                             "{backup}\n{cleanup}\nLes services des piles redémarreront brièvement.",
         "err.missing_version_source": "version_file ou version_cmd manquant",
         "err.installed_version_not_found": "version installée introuvable",
         "err.latest_version_unavailable": "dernière version indisponible",
@@ -230,9 +199,8 @@ STRINGS = {
 }
 
 # Strings handed to the browser for the page's JavaScript.
-JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "js_confirm_os", "js_confirm_apps",
-           "js_confirm_pve", "js_backup_yes", "js_backup_no", "js_cleanup_yes", "js_cleanup_no", "js_confirm_docker", "js_backup_once", "js_confirm_chain",
-           "step_queued", "step_system", "step_app", "step_docker", "live_progress")
+JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "step_queued", "step_system",
+           "step_app", "step_docker", "live_progress")
 
 
 def pick_language(cookie_value, accept_languages):

@@ -471,4 +471,4 @@ def test_page_lets_you_tick_several_updates(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
     assert 'id="act-picker"' in page and "Choose updates" in page and 'id="act-run"' in page
-    assert "actions: action" in page and "Run these updates?" in page
+    assert "actions: action" in page and "window.confirm" not in page
