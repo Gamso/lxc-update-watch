@@ -490,3 +490,22 @@ def test_the_page_hands_its_data_to_the_script(web, token_headers, sample_report
     job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
     page = web.get("/").get_data(as_text=True)
     assert f'"jobId": "{job["id"]}"' in page and '"jobActive": true' in page and '"jobStatus": "pending"' in page
+
+
+def test_version_banner_follows_the_installed_collector_not_the_last_report(web, token_headers, sample_report):
+    import app as web_app
+    sample_report["collector_version"] = "0.2.0"
+    post_report(web, token_headers, sample_report)
+    assert "differ" in web.get("/").get_data(as_text=True)                   # the report comes from an old collector
+    web.get("/api/jobs/pending", headers={**token_headers, "X-Collector-Version": web_app.VERSION})
+    page = web.get("/").get_data(as_text=True)                               # ...but the new one is already polling
+    assert "differ" not in page and f"collector v{web_app.VERSION}" in page
+    web.get("/api/jobs/pending", headers={**token_headers, "X-Collector-Version": "0.2.0"})
+    assert "differ" in web.get("/").get_data(as_text=True)                   # a rollback is noticed too
+
+
+def test_the_version_header_is_only_trusted_from_the_collector(web, sample_report):
+    import app as web_app
+    sample_report["collector_version"] = "0.2.0"
+    web.get("/api/jobs/pending", headers={"X-Collector-Version": web_app.VERSION})    # no token: refused, not recorded
+    assert not web_app.COLLECTOR_FILE.exists()

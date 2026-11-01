@@ -17,6 +17,7 @@ REFRESH_FILE = STATE_FILE.with_name("refresh.json")
 JOB_FILE = STATE_FILE.with_name("job.json")
 LOG_FILE = STATE_FILE.with_name("job.log")
 PROGRESS_FILE = STATE_FILE.with_name("progress.json")
+COLLECTOR_FILE = STATE_FILE.with_name("collector.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
 JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps", "update_docker"}
 # Actions that change the containers: a full check of them follows, and a backup can be taken first.
@@ -90,6 +91,19 @@ def now_iso():
 
 
 # ---------------------------------------------------------------- authentication and errors
+
+def note_collector():
+    """Remember the version the collector announces in its requests: it tells which collector is installed now, which
+    the last report cannot (it only changes at the next collection)."""
+    version = request.headers.get("X-Collector-Version", "").strip()[:40]
+    if version and (read_json(COLLECTOR_FILE) or {}).get("version") != version:
+        write_json(COLLECTOR_FILE, {"version": version, "seen_at": now_iso()})
+
+
+def installed_collector_version(state):
+    seen = read_json(COLLECTOR_FILE) or {}
+    return seen.get("version") or state.get("collector_version")
+
 
 def api_error(status, code, message):
     """Abort with a JSON body: `message` is for humans and logs, `code` lets the page show a translated text."""
@@ -241,7 +255,7 @@ def build_view(state, tr):
     age_h = (datetime.now(timezone.utc) - checked).total_seconds() / 3600
     job = load_job()
     names = {ct["ctid"]: ct["name"] for ct in state["containers"]}
-    collector_version = state.get("collector_version")
+    collector_version = installed_collector_version(state)
     return {
         "host": state.get("host", ""),
         "checked_raw": state["checked_at"],
@@ -374,6 +388,7 @@ def api_status():
 @app.post("/api/report")
 def api_report():
     require_token()
+    note_collector()
     report = request.get_json(silent=True)
     if not isinstance(report, dict) or not isinstance(report.get("containers"), list) or "checked_at" not in report:
         api_error(400, "invalid_report", "invalid report")
@@ -522,6 +537,7 @@ def api_actions():
 @app.get("/api/jobs/pending")
 def api_jobs_pending():
     require_token()
+    note_collector()
     job = load_job()
     return jsonify(refresh=refresh_requested_at() is not None,
                    job=job if job and job["status"] == "pending" and job_is_active(job) else None)

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The *collector and service versions differ* banner no longer lingers after a redeploy until the next check: the
+  collector announces its version in every request (every minute) and the page uses it instead of the one written in
+  the last report.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

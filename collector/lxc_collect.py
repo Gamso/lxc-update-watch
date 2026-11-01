@@ -962,7 +962,8 @@ def server_call(config, method, path, body=None, timeout=15):
         config["server_url"].rstrip("/") + path,
         data=json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None),
         method=method,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}",
+                 "X-Collector-Version": VERSION},  # lets the page tell which collector is installed right now
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.load(resp)
