@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -703,6 +704,124 @@ def update_apps(job, config, shipper):
     return sorted(results, key=lambda r: r["label"])
 
 
+# ---------------------------------------------------------------- Docker stacks
+
+# One line per running container: <compose project>|<working dir>|<compose files>|<name>|<image>. Docker Compose
+# records the first three as labels on every container it creates, which is how a stack is found again.
+DOCKER_INVENTORY_SCRIPT = (
+    "command -v docker >/dev/null 2>&1 || { echo NODOCKER; exit 0; }; "
+    "for id in $(docker ps -q); do docker inspect --format "
+    "'{{index .Config.Labels \"com.docker.compose.project\"}}|"
+    "{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}|"
+    "{{index .Config.Labels \"com.docker.compose.project.config_files\"}}|"
+    "{{.Name}}|{{.Config.Image}}' \"$id\"; done"
+)
+
+
+def parse_docker_inventory(text):
+    """Split the running containers of an LXC into Compose stacks and containers started another way.
+
+    Returns (stacks, unmanaged), or None when Docker is not installed."""
+    if text.strip() == "NODOCKER":
+        return None
+    stacks, unmanaged = {}, []
+    for line in text.splitlines():
+        parts = line.split("|", 4)
+        if len(parts) != 5:
+            continue
+        project, workdir, files, name, image = parts
+        name = name.lstrip("/")
+        if project and files:
+            stacks.setdefault((project, workdir, files), []).append(name)
+        else:
+            unmanaged.append(f"{name} ({image})")
+    return ([{"project": key[0], "workdir": key[1], "files": key[2], "containers": names}
+             for key, names in stacks.items()], unmanaged)
+
+
+def compose_script(stack):
+    """Shell script run inside the LXC: check the files, download the new images, recreate what changed."""
+    files = [f for f in stack["files"].split(",") if f]
+    options = f"--project-directory {shlex.quote(stack['workdir'])} -p {shlex.quote(stack['project'])} " + \
+              " ".join(f"-f {shlex.quote(f)}" for f in files)
+    checks = "".join(f"[ -f {shlex.quote(f)} ] || {{ echo 'compose file not found: '{shlex.quote(f)}; exit 3; }}\n"
+                     for f in files)
+    return ('if docker compose version >/dev/null 2>&1; then C="docker compose"; else C=docker-compose; fi\n'
+            f"{checks}$C {options} pull && $C {options} up -d\n")
+
+
+def backup_container(ctid, storage, shipper):
+    """vzdump of the whole container before touching it (the same command as the official update script)."""
+    shipper.write(f"[CT {ctid}] Backing up to {storage} before updating...\n")
+    code, _, _ = stream_process(["vzdump", str(ctid), "--compress", "zstd", "--storage", storage,
+                                 "--notes-template", "{{guestname}} - lxc-update-watch backup"],
+                                f"[CT {ctid}] ", shipper, 7200)
+    return code == 0
+
+
+def update_docker_one(ctid, name, job, config, shipper):
+    """docker compose pull, then up -d, for every Compose stack of one LXC; then remove the old images."""
+    label, prefix = f"CT {ctid} {name}", f"[CT {ctid}] "
+
+    def done(ok, message, note=""):
+        finish(shipper, ctid, ok, note)
+        return {"label": label, "ok": ok, "message": message[:200]}
+
+    if job.get("backup") and not backup_container(ctid, config.get("backup_storage"), shipper):
+        return done(False, "backup failed: nothing was updated", "backup failed, nothing was updated")
+    inventory = parse_docker_inventory(pct_exec(ctid, DOCKER_INVENTORY_SCRIPT, timeout=60)[1])
+    if inventory is None:
+        return done(False, "Docker is not installed in this container", "Docker is not installed")
+    stacks, unmanaged = inventory
+    if unmanaged:
+        shipper.write(f"{prefix}Not managed by Docker Compose, update them by hand: {', '.join(unmanaged)}\n")
+    if not stacks:
+        return done(False, "no running Docker Compose stack found", "no running Docker Compose stack found")
+
+    failed = []
+    for stack in stacks:
+        shipper.write(f"{prefix}== stack {stack['project']} ({', '.join(stack['containers'])}) ==\n")
+        code, _, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", compose_script(stack)],
+                                    prefix, shipper, 3600)
+        if code != 0:
+            failed.append(stack["project"])
+            shipper.write(f"{prefix}stack {stack['project']} failed (exit code {code})\n")
+    if failed:
+        note = "old images kept" if job.get("cleanup") else ""
+        return done(False, f"failed: {', '.join(failed)}", note)
+
+    summary = f"{len(stacks)} stack(s) updated"
+    if job.get("cleanup"):  # only dangling images: the ones the pull left without a name and nothing uses
+        code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "docker", "image", "prune", "-f"],
+                                       prefix, shipper, 900)
+        summary += f", {last}" if code == 0 and last else ", image cleanup failed" if code else ""
+    if unmanaged:
+        summary += f"; {len(unmanaged)} container(s) not managed by Compose"
+    return done(True, summary)
+
+
+def update_docker(job, config, shipper):
+    """Update the Docker Compose stacks of the containers of a job, a few containers at a time."""
+    if job.get("backup") and not config.get("backup_storage"):
+        return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
+    running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
+    results, todo = [], []
+    for ctid in job["ctids"]:
+        if ctid in running:
+            todo.append((ctid, running[ctid]))
+        else:
+            results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
+    workers = int(config.get("docker_update_workers", 2))
+    notes = [f"{workers} in parallel", "backup first" if job.get("backup") else "no backup",
+             "old images removed afterwards" if job.get("cleanup") else "old images kept"]
+    shipper.write(f"Docker stack update of {len(todo)} container(s) ({', '.join(notes)})\n")
+    for ctid in [r for r in job["ctids"] if r not in running]:
+        finish(shipper, ctid, False, "container stopped or not found")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results += list(pool.map(lambda item: update_docker_one(*item, job, config, shipper), todo))
+    return sorted(results, key=lambda r: r["label"])
+
+
 def normalize_id(text):
     return re.sub(r"[^a-z0-9]+", "-", re.sub(r"\.(sh|bash|py|js|ts)$", "", (text or "").lower())).strip("-")
 
@@ -769,6 +888,8 @@ def run_job(config, job):
             results = upgrade_containers(job["ctids"], config, shipper)
         elif job["action"] == "update_apps":
             results = update_apps(job, config, shipper)
+        elif job["action"] == "update_docker":
+            results = update_docker(job, config, shipper)
         elif job["action"] == "update_pve_scripts":
             shipper.write("Refreshing the scripts downloaded in PVE Scripts Local…\n")
             results = update_pve_scripts(config)

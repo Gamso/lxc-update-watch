@@ -19,6 +19,7 @@ STRINGS = {
         "stale": "The last report is more than {hours} h old: the collector may have stopped.",
         "btn_upgrade_os": "Update system ({n})",
         "btn_update_apps": "Update applications ({n})",
+        "btn_update_docker": "Update Docker stacks ({n})",
         "btn_pve_scripts": "Refresh PVE scripts",
         "options": "Options",
         "opt_language": "Language",
@@ -29,11 +30,14 @@ STRINGS = {
         "sign_in_again": "Sign in again",
         "login_failed": "Sign-in failed. Go back to the home page and try again.",
         "login_denied": "Your account is not allowed to use this page.",
-        "opt_backup": "Back up before updating applications ({storage})",
+        "opt_backup": "Back up before updating applications and Docker stacks ({storage})",
+        "opt_cleanup": "Remove old Docker images after updating Docker stacks",
         "backup_unavailable": "Backup unavailable: <code>backup_storage</code> is not set in the collector config",
         "job_upgrade_os": "System update",
         "job_update_apps": "Application update",
         "job_update_apps_backup": "Application update (with backup)",
+        "job_update_docker": "Docker stack update",
+        "job_update_docker_backup": "Docker stack update (with backup)",
         "job_update_pve_scripts": "PVE scripts refresh",
         "job_pending": "waiting for the collector (up to a minute)",
         "job_running": "running…",
@@ -82,6 +86,10 @@ STRINGS = {
         "js_confirm_pve": "Refresh all scripts downloaded in PVE Scripts Local?\nThis can take several minutes.",
         "js_backup_yes": "A backup (vzdump) will be made before each update.",
         "js_backup_no": "No backup will be made.",
+        "js_cleanup_yes": "The old Docker images will be removed afterwards.",
+        "js_cleanup_no": "The old Docker images will be kept.",
+        "js_confirm_docker": "Update the Docker stacks of these containers (docker compose pull, then up -d)?\n\n{names}\n\n"
+                             "{backup}\n{cleanup}\nThe services of the stacks will restart briefly.",
         "err.missing_version_source": "version_file or version_cmd missing",
         "err.installed_version_not_found": "installed version not found",
         "err.latest_version_unavailable": "latest version unavailable",
@@ -109,6 +117,7 @@ STRINGS = {
         "stale": "Le dernier rapport date de plus de {hours} h : le collecteur ne tourne peut-être plus.",
         "btn_upgrade_os": "Mettre à jour le système ({n})",
         "btn_update_apps": "Mettre à jour les applications ({n})",
+        "btn_update_docker": "Mettre à jour les piles Docker ({n})",
         "btn_pve_scripts": "Actualiser les scripts PVE",
         "options": "Options",
         "opt_language": "Langue",
@@ -119,11 +128,14 @@ STRINGS = {
         "sign_in_again": "Se reconnecter",
         "login_failed": "La connexion a échoué. Retourne à l'accueil et réessaie.",
         "login_denied": "Ton compte n'est pas autorisé à utiliser cette page.",
-        "opt_backup": "Sauvegarder avant la mise à jour des applications ({storage})",
+        "opt_backup": "Sauvegarder avant la mise à jour des applications et des piles Docker ({storage})",
+        "opt_cleanup": "Supprimer les anciennes images Docker après la mise à jour des piles Docker",
         "backup_unavailable": "Sauvegarde indisponible : <code>backup_storage</code> absent de la config du collecteur",
         "job_upgrade_os": "Mise à jour système",
         "job_update_apps": "Mise à jour des applications",
         "job_update_apps_backup": "Mise à jour des applications (avec sauvegarde)",
+        "job_update_docker": "Mise à jour des piles Docker",
+        "job_update_docker_backup": "Mise à jour des piles Docker (avec sauvegarde)",
         "job_update_pve_scripts": "Actualisation des scripts PVE",
         "job_pending": "en attente du collecteur (une minute au plus)",
         "job_running": "en cours…",
@@ -174,6 +186,10 @@ STRINGS = {
                           "Cela peut durer plusieurs minutes.",
         "js_backup_yes": "Une sauvegarde (vzdump) sera faite avant chaque mise à jour.",
         "js_backup_no": "Aucune sauvegarde ne sera faite.",
+        "js_cleanup_yes": "Les anciennes images Docker seront supprimées ensuite.",
+        "js_cleanup_no": "Les anciennes images Docker seront conservées.",
+        "js_confirm_docker": "Mettre à jour les piles Docker de ces conteneurs (docker compose pull, puis up -d) ?\n\n{names}\n\n"
+                             "{backup}\n{cleanup}\nLes services des piles redémarreront brièvement.",
         "err.missing_version_source": "version_file ou version_cmd manquant",
         "err.installed_version_not_found": "version installée introuvable",
         "err.latest_version_unavailable": "dernière version indisponible",
@@ -193,8 +209,8 @@ STRINGS = {
 
 # Strings handed to the browser for the page's JavaScript.
 JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "js_confirm_os", "js_confirm_apps",
-           "js_confirm_pve", "js_backup_yes", "js_backup_no", "step_queued", "step_system", "step_app", "step_docker",
-           "live_progress")
+           "js_confirm_pve", "js_backup_yes", "js_backup_no", "js_cleanup_yes", "js_cleanup_no", "js_confirm_docker",
+           "step_queued", "step_system", "step_app", "step_docker", "live_progress")
 
 
 def pick_language(cookie_value, accept_languages):

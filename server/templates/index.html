@@ -108,6 +108,7 @@ summary.line::-webkit-details-marker{display:none}
 {% if view.backup_storage %}<label><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
 {% else %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
 </div>
+<div class="opt-row"><label><input type="checkbox" id="opt-cleanup" checked> {{ t('opt_cleanup') }}</label></div>
 {% endif %}
 </dialog>
 {% if not view %}
@@ -125,11 +126,12 @@ summary.line::-webkit-details-marker{display:none}
 <div class="actions">
 <button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
 <button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
+<button id="act-docker" type="button" data-names="{{ view.docker_updatable|map(attribute='name')|join(', ') }}"{% if not view.docker_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_docker', n=view.docker_updatable|length) }}</button>
 </div>
 {% if view.job %}
 {% set j = view.job %}
 <div class="job">
-<p><strong>{{ t('job_update_apps_backup' if j.action == 'update_apps' and j.backup else 'job_' ~ j.action) }}</strong> ·
+<p><strong>{{ t('job_' ~ j.action ~ ('_backup' if j.backup else '')) }}</strong> ·
 {% if j.status == 'pending' %}{{ t('job_pending') }}
 {% elif j.status == 'running' %}{{ t('job_running') }}
 {% elif j.ok %}{{ t('job_done_ok') }}
@@ -239,10 +241,25 @@ summary.line::-webkit-details-marker{display:none}
       try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
     });
   }
+  var cleanup = document.getElementById('opt-cleanup'), docker = document.getElementById('act-docker');
+  if (cleanup) {
+    try { var savedCleanup = localStorage.getItem('lxcw_cleanup'); if (savedCleanup !== null) cleanup.checked = savedCleanup === '1'; } catch (e) {}
+    cleanup.addEventListener('change', function () {
+      try { localStorage.setItem('lxcw_cleanup', cleanup.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
   if (apps) apps.addEventListener('click', function () {
     var withBackup = !!(backup && backup.checked);
     act('update_apps', fmt(I18N.js_confirm_apps, { names: apps.dataset.names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
       { backup: withBackup });
+  });
+  if (docker) docker.addEventListener('click', function () {
+    var withBackup = !!(backup && backup.checked), withCleanup = !!(cleanup && cleanup.checked);
+    act('update_docker', fmt(I18N.js_confirm_docker, {
+      names: docker.dataset.names,
+      backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no,
+      cleanup: withCleanup ? I18N.js_cleanup_yes : I18N.js_cleanup_no
+    }), { backup: withBackup, cleanup: withCleanup });
   });
 
   // Live console: the collector streams the job output to the service and the page polls it. A line starting with

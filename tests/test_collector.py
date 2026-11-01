@@ -269,3 +269,106 @@ def test_application_update_closes_every_container(monkeypatch):
     assert [r["ok"] for r in results] == [True, False]
     assert "[CT 100] \x1b[32;1m== finished: ok" in shipper.text          # updated
     assert "[CT 102] stopped, or no update command" in shipper.text and "[CT 102] \x1b[31;1m== finished: failed" in shipper.text
+
+
+# ---------------------------------------------------------------- Docker stacks
+
+INVENTORY = "\n".join([
+    "web|/opt/web|/opt/web/compose.yml|/web-app-1|nginx:latest",
+    "web|/opt/web|/opt/web/compose.yml|/web-db-1|postgres:16",
+    "|||/manual|redis:7",
+    "mail|/srv/mail|/srv/mail/a.yml,/srv/mail/b.yml|/mail-1|ghcr.io/o/mail:latest",
+])
+
+
+def test_inventory_splits_compose_stacks_from_manual_containers():
+    stacks, unmanaged = c.parse_docker_inventory(INVENTORY)
+    assert [s["project"] for s in stacks] == ["web", "mail"]
+    assert stacks[0]["containers"] == ["web-app-1", "web-db-1"]
+    assert stacks[1]["files"] == "/srv/mail/a.yml,/srv/mail/b.yml"
+    assert unmanaged == ["manual (redis:7)"]
+    assert c.parse_docker_inventory("NODOCKER") is None
+    assert c.parse_docker_inventory("") == ([], [])
+
+
+def test_compose_script_pulls_then_recreates_and_quotes_paths():
+    stack = {"project": "my app", "workdir": "/opt/my app", "files": "/opt/my app/a.yml,/opt/my app/b.yml"}
+    script = c.compose_script(stack)
+    assert script.index(" pull ") < script.index(" up -d")
+    assert "-p 'my app'" in script and "--project-directory '/opt/my app'" in script
+    assert "-f '/opt/my app/a.yml' -f '/opt/my app/b.yml'" in script
+    assert "compose file not found" in script and "docker-compose" in script  # a missing file is reported, v1 is a fallback
+
+
+def docker_env(monkeypatch, inventory=INVENTORY, fail=()):
+    """Fake the container: its Docker inventory, and every command run through stream_process."""
+    commands = []
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0, inventory))
+
+    def fake_stream(cmd, prefix, shipper, timeout, env=None):
+        commands.append(cmd)
+        shipper.write(prefix + "output\n")
+        code = 1 if any(word in " ".join(cmd) for word in fail) else 0
+        return code, ("Total reclaimed space: 1.2GB" if "prune" in cmd else "ok"), False
+
+    monkeypatch.setattr(c, "stream_process", fake_stream)
+    return commands
+
+
+def run_docker(**job):
+    shipper = Shipper()
+    result = c.update_docker_one(101, "app", {"ctids": [101], **job}, {"backup_storage": "backup"}, shipper)
+    return result, shipper.text
+
+
+def test_docker_update_updates_every_stack_then_removes_old_images(monkeypatch):
+    commands = docker_env(monkeypatch)
+    result, text = run_docker(cleanup=True)
+    assert result["ok"] is True and "2 stack(s) updated, Total reclaimed space: 1.2GB" in result["message"]
+    assert "1 container(s) not managed by Compose" in result["message"]
+    assert len(commands) == 3 and commands[2][-3:] == ["image", "prune", "-f"]    # the cleanup comes last
+    assert "update them by hand: manual (redis:7)" in text and "== stack web (web-app-1, web-db-1) ==" in text
+    assert "== finished: ok ==" in text
+
+
+def test_docker_update_keeps_old_images_when_cleanup_is_off(monkeypatch):
+    commands = docker_env(monkeypatch)
+    result, _ = run_docker(cleanup=False)
+    assert result["ok"] is True and len(commands) == 2 and not any("prune" in cmd for cmd in commands)
+
+
+def test_a_failed_stack_keeps_the_old_images(monkeypatch):
+    commands = docker_env(monkeypatch, fail=("/srv/mail",))
+    result, text = run_docker(cleanup=True)
+    assert result["ok"] is False and result["message"] == "failed: mail"
+    assert not any("prune" in cmd for cmd in commands)                            # nothing is deleted after a failure
+    assert "stack mail failed" in text and "== finished: failed ==" in text and "old images kept" in text
+
+
+def test_backup_runs_first_and_a_failed_backup_stops_everything(monkeypatch):
+    commands = docker_env(monkeypatch)
+    result, _ = run_docker(backup=True)
+    assert commands[0][:2] == ["vzdump", "101"] and "backup" in commands[0] and result["ok"] is True
+    commands = docker_env(monkeypatch, fail=("vzdump",))
+    result, text = run_docker(backup=True, cleanup=True)
+    assert result["ok"] is False and "backup failed" in result["message"]
+    assert len(commands) == 1 and "== finished: failed ==" in text                # no stack was touched
+
+
+def test_docker_update_reports_what_it_cannot_do(monkeypatch):
+    docker_env(monkeypatch, inventory="NODOCKER")
+    assert "not installed" in run_docker()[0]["message"]
+    docker_env(monkeypatch, inventory="|||/manual|redis:7")
+    result, text = run_docker()
+    assert result["ok"] is False and "no running Docker Compose stack" in result["message"] and "redis:7" in text
+
+
+def test_docker_update_of_several_containers(monkeypatch):
+    docker_env(monkeypatch)
+    monkeypatch.setattr(c, "list_containers", lambda: [("101", "running", "a"), ("102", "stopped", "b")])
+    shipper = Shipper()
+    results = c.update_docker({"ctids": [101, 102], "cleanup": False}, {"docker_update_workers": 1}, shipper)
+    assert [(r["label"], r["ok"]) for r in results] == [("CT 101 a", True), ("CT 102", False)]
+    assert "[CT 102] container stopped or not found" in shipper.text
+    nostorage = c.update_docker({"ctids": [101], "backup": True}, {}, Shipper())
+    assert nostorage[0]["label"] == "Backup" and nostorage[0]["ok"] is False

@@ -105,6 +105,7 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `pve_scripts_local` | `{"url": "http://<ct-ip>:3000"}`, needed for the *Refresh PVE scripts* button. |
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
+| `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
 | `registry_auth` | Credentials for private registries: `{"ghcr.io": {"username": "...", "token": "..."}}`. |
 
 Environment of the web service (`/etc/lxc-update-watch.env`):
@@ -165,6 +166,15 @@ notes below).
   *Back up before updating applications* option of the Options menu (gear icon, remembered by the browser) runs a
   `vzdump` before each update. Containers that need a reboot are listed in the console.
   Add-ons have no `update` command: the page shows the command to run inside the container.
+- **Update Docker stacks** is for the containers that have a Docker image with a newer version. Inside each container
+  it finds the Docker Compose stacks of the running containers (Compose records the project directory and files in
+  labels on every container it creates), then runs `docker compose pull` and `docker compose up -d` for each one: only
+  the services whose image changed are recreated, and volumes are never touched. Containers started another way
+  (`docker run`) cannot be recreated safely and are listed as "to update by hand". If a stack fails, nothing is
+  removed. With *Remove old Docker images after updating Docker stacks* (Options menu, on by default) the collector
+  then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
+  and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
+  applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
 - **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 

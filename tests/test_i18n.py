@@ -40,7 +40,10 @@ def test_browser_keys_exist():
 def test_template_only_uses_known_keys():
     template = (ROOT / "server" / "templates" / "index.html").read_text(encoding="utf-8")
     used = set(re.findall(r"\bt\('([a-z_.]+)'", template))
-    used |= {f"job_{action}" for action in ("upgrade_os", "update_apps", "update_pve_scripts")}  # built dynamically
+    used.discard("job_")  # the job titles are built from the action name: check every combination instead
+    actions = ("upgrade_os", "update_apps", "update_docker", "update_pve_scripts")
+    used |= {f"job_{action}" for action in actions}
+    used |= {f"job_{action}_backup" for action in ("update_apps", "update_docker")}
     assert used, "no translation key found in the template"
     assert used <= set(STRINGS[DEFAULT]), used - set(STRINGS[DEFAULT])
 

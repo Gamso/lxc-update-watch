@@ -10,6 +10,11 @@ All notable changes to this project are documented here. The format follows
 - Optional sign-in with OpenID Connect (Authelia, Keycloak, Authentik...), turned on by `OIDC_ISSUER` in the
   web service environment: authorization code flow with PKCE, optional allow-lists of groups or users, a *Sign out*
   button in the Options menu. The collector keeps its token and nothing changes when the variable is not set.
+- *Update Docker stacks* button: runs `docker compose pull` then `docker compose up -d` for the Compose stacks of the
+  containers that have an image to update (found through the labels Compose puts on its containers), with an optional
+  backup first and an option, on by default, to remove the old images afterwards (`docker image prune -f` only, and
+  only when every stack succeeded). Containers not started by Compose are listed as to update by hand.
+- Options: *Back up before updating applications and Docker stacks* and *Remove old Docker images* (on by default).
 
 ## [0.2.0] - 2026-10-31
 

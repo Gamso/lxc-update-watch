@@ -18,7 +18,10 @@ JOB_FILE = STATE_FILE.with_name("job.json")
 LOG_FILE = STATE_FILE.with_name("job.log")
 PROGRESS_FILE = STATE_FILE.with_name("progress.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
-JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps"}
+JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps", "update_docker"}
+# Actions that change the containers: a full check of them follows, and a backup can be taken first.
+CONTAINER_ACTIONS = ("upgrade_os", "update_apps", "update_docker")
+BACKUP_ACTIONS = ("update_apps", "update_docker")
 LOG_MAX_BYTES = 1_000_000
 PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
 CHECK_STEPS = ("system", "app", "docker")
@@ -121,6 +124,12 @@ def job_is_active(job):
         return False
     age = datetime.now(timezone.utc) - datetime.fromisoformat(job["requested_at"])
     return age.total_seconds() < JOB_MAX_AGE_H * 3600
+
+
+def docker_updatable_containers(state):
+    """Running containers with at least one Docker image (not built locally) that has a newer version."""
+    return [ct for ct in state["containers"]
+            if ct["status"] == "running" and pending_flags(ct)[2]]
 
 
 def app_updatable_containers(state):
@@ -227,6 +236,7 @@ def build_view(state, tr):
         "refreshing": refresh_requested_at() is not None,
         "upgradable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in upgradable_containers(state)],
         "app_updatable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in app_updatable_containers(state)],
+        "docker_updatable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in docker_updatable_containers(state)],
         "backup_storage": state.get("backup_storage"),
         "job": job,
         "job_active": job_is_active(job),
@@ -476,16 +486,19 @@ def api_actions():
         ctids = [ct["ctid"] for ct in upgradable_containers(state)]
     elif action == "update_apps":
         ctids = [ct["ctid"] for ct in app_updatable_containers(state)]
-    if action in ("upgrade_os", "update_apps") and not ctids:
+    elif action == "update_docker":
+        ctids = [ct["ctid"] for ct in docker_updatable_containers(state)]
+    if action in CONTAINER_ACTIONS and not ctids:
         api_error(400, "no_containers", "no container to update")
-    backup = bool(body.get("backup")) and action == "update_apps"
+    backup = bool(body.get("backup")) and action in BACKUP_ACTIONS
+    cleanup = bool(body.get("cleanup")) and action == "update_docker"   # remove the old images afterwards
     if backup and not state.get("backup_storage"):
         api_error(400, "backup_not_configured", "backup_storage is not set in the collector config")
     job = {"id": uuid.uuid4().hex, "action": action, "ctids": ctids, "status": "pending", "backup": backup,
-           "requested_at": now_iso(), "results": []}
+           "cleanup": cleanup, "requested_at": now_iso(), "results": []}
     LOG_FILE.unlink(missing_ok=True)
     write_json(JOB_FILE, job)
-    if action in ("upgrade_os", "update_apps"):
+    if action in CONTAINER_ACTIONS:
         request_refresh()  # the list must be checked again once the updates are installed
     return jsonify(job), 202
 

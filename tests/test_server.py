@@ -288,7 +288,7 @@ def test_options_menu_holds_the_language_and_the_backup_choice(web, token_header
     dialog = page[page.index('<dialog id="options-dialog"'):]
     dialog = dialog[:dialog.index("</dialog>")]
     assert '<select id="lang-select"' in dialog and "Language" in dialog
-    assert 'id="opt-backup"' in dialog and "Back up before updating applications (backup)" in dialog
+    assert 'id="opt-backup"' in dialog and "Back up before updating applications and Docker stacks (backup)" in dialog
     assert 'id="opt-backup"' not in page.replace(dialog, "")                   # nowhere else on the page
 
 
@@ -364,3 +364,41 @@ def test_console_has_no_tabs_for_a_job_without_containers(web, token_headers, sa
     web.post("/api/actions", json={"action": "update_pve_scripts"})
     page = web.get("/").get_data(as_text=True)
     assert 'id="console"' in page and 'id="console-tabs"' not in page
+
+
+# ---------------------------------------------------------------- Docker stack updates
+
+def test_docker_update_targets_containers_with_image_updates(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "update_docker", "backup": True, "cleanup": True}).get_json()
+    assert job["ctids"] == [101] and job["backup"] is True and job["cleanup"] is True   # only 101 has an image to update
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True   # a check follows
+
+
+def test_cleanup_only_applies_to_docker_updates(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os", "backup": True, "cleanup": True}).get_json()
+    assert job["backup"] is False and job["cleanup"] is False
+
+
+def test_docker_update_needs_something_to_update_and_a_storage_for_backups(web, token_headers, sample_report):
+    sample_report["containers"][1]["docker"] = [{"image": "redis:7", "update": False}]
+    post_report(web, token_headers, sample_report)
+    assert web.post("/api/actions", json={"action": "update_docker"}).get_json()["code"] == "no_containers"
+    sample_report["containers"][1]["docker"] = [{"image": "redis:7", "update": True}]
+    sample_report["backup_storage"] = None
+    post_report(web, token_headers, sample_report)
+    refused = web.post("/api/actions", json={"action": "update_docker", "backup": True})
+    assert refused.get_json()["code"] == "backup_not_configured"
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
+
+
+def test_page_offers_the_docker_update(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="act-docker"' in page and "Update Docker stacks (1)" in page and 'data-names="paperless"' in page
+    assert 'id="opt-cleanup"' in page and "Remove old Docker images after updating Docker stacks" in page
+    web.post("/api/actions", json={"action": "update_docker", "backup": True})
+    assert "Docker stack update (with backup)" in web.get("/").get_data(as_text=True)
+    web.get("/?lang=fr")
+    assert "Mettre à jour les piles Docker" in web.get("/").get_data(as_text=True)
