@@ -23,6 +23,7 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "JOB_FILE", tmp_path / "job.json")
     monkeypatch.setattr(web_app, "LOG_FILE", tmp_path / "job.log")
     monkeypatch.setattr(web_app, "PROGRESS_FILE", tmp_path / "progress.json")
+    monkeypatch.setattr(web_app, "COLLECTOR_FILE", tmp_path / "collector.json")
     monkeypatch.setattr(web_app, "TOKEN", TOKEN)
     return web_app.app.test_client()
 

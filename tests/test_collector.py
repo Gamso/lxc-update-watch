@@ -485,3 +485,21 @@ def test_run_job_dispatches_a_chain(monkeypatch):
     monkeypatch.setattr(c, "update_chain", lambda job, config, shipper: calls.append(job["actions"]) or [])
     c.run_job({}, {"id": "j", "action": "update_chain", "actions": ["upgrade_os", "update_docker"], "ctids": []})
     assert calls == [["upgrade_os", "update_docker"]]
+
+
+def test_every_request_to_the_service_announces_the_collector_version(monkeypatch):
+    seen = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, *args):
+            return b"{}"
+
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
+    c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
+    assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
