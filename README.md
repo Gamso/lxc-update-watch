@@ -168,11 +168,63 @@ notes below).
 - **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 
-Security notes: **the page has no login**. Anyone who can open it can read the state and the console output, and
-can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the host
-through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and requests
-must be JSON so a cross-site form cannot trigger one. Keep the page on your local network, or put an authenticating
-reverse proxy (Authelia, Cloudflare Access, a VPN...) in front of it before exposing it to the Internet.
+Security notes: **by default the page has no login**. Anyone who can open it can read the state and the console
+output, and can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the
+host through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and
+requests must be JSON so a cross-site form cannot trigger one. Either keep the page on your local network, turn on
+the optional OpenID Connect login below, or put an authenticating reverse proxy in front of it.
+
+### Optional login with OpenID Connect
+
+Set `OIDC_ISSUER` in `/etc/lxc-update-watch.env` to require a sign-in with any OpenID Connect provider (Authelia,
+Keycloak, Authentik...). Without it nothing changes. Once enabled, every page and API used by a browser needs a
+signed-in user; the collector keeps using its `LXC_WATCH_TOKEN`, and `/healthz` stays open.
+
+| Variable | Meaning |
+| --- | --- |
+| `OIDC_ISSUER` | Issuer URL of the provider, for example `https://auth.example.com`. Setting it turns the login on. |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Client registered at the provider (required). |
+| `OIDC_REDIRECT_URI` | Public address of the callback, `https://lxc.example.com/auth/callback` (required; it must match the provider's configuration exactly). |
+| `OIDC_ALLOWED_GROUPS`, `OIDC_ALLOWED_USERS` | Optional, comma separated. When either is set, only these groups or users (user name or e-mail) get in. When both are empty, every user the provider authenticates is accepted. |
+| `OIDC_SCOPES` | Default `openid profile email groups`. |
+| `OIDC_TOKEN_AUTH_METHOD` | Default `client_secret_basic`; use `client_secret_post` if the provider's client is set up that way. |
+| `LXC_WATCH_SECRET_KEY` | Optional key signing the session cookie; derived from `LXC_WATCH_TOKEN` when unset. |
+
+Example with Authelia. In Authelia's `configuration.yml` (the secret is stored hashed, e.g. with
+`authelia crypto hash generate pbkdf2 --variant sha512`):
+
+```yaml
+identity_providers:
+  oidc:
+    clients:
+      - client_id: lxc-update-watch
+        client_name: LXC update watch
+        client_secret: '$pbkdf2-sha512$...'
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://lxc.example.com/auth/callback
+        scopes: [openid, profile, email, groups]
+        token_endpoint_auth_method: client_secret_basic
+```
+
+then in `/etc/lxc-update-watch.env` of the web service (the plain secret), followed by
+`systemctl restart lxc-update-watch`:
+
+```
+OIDC_ISSUER=https://auth.example.com
+OIDC_CLIENT_ID=lxc-update-watch
+OIDC_CLIENT_SECRET=the-plain-secret
+OIDC_REDIRECT_URI=https://lxc.example.com/auth/callback
+OIDC_ALLOWED_GROUPS=admins
+```
+
+Notes: the web service must reach the provider (it fetches `/.well-known/openid-configuration` at the first login)
+and the provider must be served over HTTPS in practice; the page itself should be reached through the HTTPS address
+of `OIDC_REDIRECT_URI` (reverse proxy), which also makes the session cookie `Secure`. The session lasts 12 hours.
+*Sign out* in the Options menu ends the page's session only, not the one at the provider: a page confirms it, and
+*Sign in again* signs you straight back in while the provider's session is open (sign out of Authelia too to change user). If the provider is
+down nobody can sign in to the page, but the collector keeps reporting.
 
 ## Languages
 

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Optional sign-in with OpenID Connect (Authelia, Keycloak, Authentik...), turned on by `OIDC_ISSUER` in the
+  web service environment: authorization code flow with PKCE, optional allow-lists of groups or users, a *Sign out*
+  button in the Options menu. The collector keeps its token and nothing changes when the variable is not set.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added

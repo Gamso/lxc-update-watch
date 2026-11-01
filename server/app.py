@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
 
+import auth
 from i18n import COOKIE, LANGUAGE_NAMES, SUPPORTED, Translator, pick_language
 
 STATE_FILE = Path(os.environ.get("LXC_WATCH_DATA", "data")) / "state.json"
@@ -37,6 +38,11 @@ def read_version():
 VERSION = read_version()
 
 app = Flask(__name__)
+
+# Endpoints used by the collector (shared token): the optional OIDC login does not apply to them.
+COLLECTOR_ENDPOINTS = {"api_report", "api_refresh_pending", "api_progress_post", "api_jobs_pending", "api_job_start",
+                       "api_job_result", "api_job_log_append"}
+app.before_request(auth.guard)
 
 
 # ---------------------------------------------------------------- storage
@@ -254,12 +260,70 @@ def index():
     state = load_state()
     return render_template("index.html", view=build_view(state, tr) if state else None, t=tr, lang=tr.lang,
                            languages=[(code, LANGUAGE_NAMES[code]) for code in SUPPORTED],
-                           i18n=tr.browser_strings(), version=VERSION)
+                           i18n=tr.browser_strings(), version=VERSION,
+                           login=bool(app.config.get("OIDC")), user=auth.current_user())
 
 
 @app.get("/healthz")
 def healthz():
     return "ok"
+
+
+# ---------------------------------------------------------------- optional OIDC login
+
+def login_enabled_or_404():
+    if not app.config.get("OIDC"):
+        abort(404)
+
+
+def login_error(denied):
+    tr = translator()
+    text = tr("login_denied") if denied else tr("login_failed")
+    return make_response(text + "\n", 403 if denied else 400, {"Content-Type": "text/plain; charset=utf-8"})
+
+
+@app.get("/auth/login")
+def oidc_login():
+    login_enabled_or_404()
+    return auth.login(app.config)
+
+
+@app.get("/auth/callback")
+def oidc_callback():
+    login_enabled_or_404()
+    user, error = auth.callback(app.config)
+    if error:
+        return login_error(error == "denied")
+    return redirect(url_for("index"))
+
+
+@app.post("/auth/logout")
+def oidc_logout():
+    login_enabled_or_404()
+    session.clear()
+    return redirect(url_for("oidc_logged_out"))
+
+
+SIGNED_OUT_PAGE = """<!doctype html>
+<html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<style>:root{{--bg:#f6f6f4;--fg:#1c1c1a;--line:#e2e2dd;--card:#fff}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#161615;--fg:#ececE8;--line:#34342f;--card:#1f1f1d}}}}
+body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}}
+main{{text-align:center;padding:24px}}a{{display:inline-block;margin-top:12px;color:var(--fg);background:var(--card);
+border:1px solid var(--line);border-radius:8px;padding:8px 16px;text-decoration:none}}</style></head>
+<body><main><p>{message}</p><a href="{href}">{link}</a></main></body></html>
+"""
+
+
+@app.get("/auth/logged-out")
+def oidc_logged_out():
+    """Shown after signing out. Going straight back to the page would sign the user in again, because the identity
+    provider keeps its own session."""
+    login_enabled_or_404()
+    tr = translator()
+    return make_response(SIGNED_OUT_PAGE.format(lang=tr.lang, title=tr("page_title"), message=tr("signed_out"),
+                                                href=url_for("oidc_login"), link=tr("sign_in_again")))
 
 
 # ---------------------------------------------------------------- API: reports and refresh
@@ -479,3 +543,12 @@ def api_job_log_read(job_id):
         text = ""
     offset = max(request.args.get("offset", 0, type=int), 0)
     return jsonify(text=text[offset:], offset=len(text), status=job["status"])
+
+
+def configure_login():
+    settings = auth.Settings.from_env(os.environ)
+    if settings:
+        auth.enable(app, settings, COLLECTOR_ENDPOINTS)
+
+
+configure_login()

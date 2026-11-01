@@ -99,6 +99,10 @@ summary.line::-webkit-details-marker{display:none}
 <select id="lang-select" name="lang" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
 <noscript><button type="submit">OK</button></noscript>
 </form>
+{% if login and user %}
+<div class="opt-row"><span class="sub">{{ t('signed_in_as', user=user) }}</span>
+<form method="post" action="/auth/logout"><button type="submit">{{ t('sign_out') }}</button></form></div>
+{% endif %}
 {% if view %}
 <div class="opt-row">
 {% if view.backup_storage %}<label><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
