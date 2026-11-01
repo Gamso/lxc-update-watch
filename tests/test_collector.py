@@ -269,3 +269,219 @@ def test_application_update_closes_every_container(monkeypatch):
     assert [r["ok"] for r in results] == [True, False]
     assert "[CT 100] \x1b[32;1m== finished: ok" in shipper.text          # updated
     assert "[CT 102] stopped, or no update command" in shipper.text and "[CT 102] \x1b[31;1m== finished: failed" in shipper.text
+
+
+# ---------------------------------------------------------------- Docker stacks
+
+INVENTORY = "\n".join([
+    "web|/opt/web|/opt/web/compose.yml|/web-app-1|nginx:latest",
+    "web|/opt/web|/opt/web/compose.yml|/web-db-1|postgres:16",
+    "|||/manual|redis:7",
+    "mail|/srv/mail|/srv/mail/a.yml,/srv/mail/b.yml|/mail-1|ghcr.io/o/mail:latest",
+])
+
+
+def test_inventory_splits_compose_stacks_from_manual_containers():
+    stacks, unmanaged = c.parse_docker_inventory(INVENTORY)
+    assert [s["project"] for s in stacks] == ["web", "mail"]
+    assert stacks[0]["containers"] == ["web-app-1", "web-db-1"]
+    assert stacks[1]["files"] == "/srv/mail/a.yml,/srv/mail/b.yml"
+    assert unmanaged == ["manual (redis:7)"]
+    assert c.parse_docker_inventory("NODOCKER") is None
+    assert c.parse_docker_inventory("") == ([], [])
+
+
+def test_compose_script_pulls_then_recreates_and_quotes_paths():
+    stack = {"project": "my app", "workdir": "/opt/my app", "files": "/opt/my app/a.yml,/opt/my app/b.yml"}
+    script = c.compose_script(stack)
+    assert script.index(" pull ") < script.index(" up -d")
+    assert "-p 'my app'" in script and "--project-directory '/opt/my app'" in script
+    assert "-f '/opt/my app/a.yml' -f '/opt/my app/b.yml'" in script
+    assert "compose file not found" in script and "docker-compose" in script  # a missing file is reported, v1 is a fallback
+
+
+def docker_env(monkeypatch, inventory=INVENTORY, fail=()):
+    """Fake the container: its Docker inventory, and every command run through stream_process."""
+    commands = []
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0, inventory))
+
+    def fake_stream(cmd, prefix, shipper, timeout, env=None):
+        commands.append(cmd)
+        shipper.write(prefix + "output\n")
+        code = 1 if any(word in " ".join(cmd) for word in fail) else 0
+        return code, ("Total reclaimed space: 1.2GB" if "prune" in cmd else "ok"), False
+
+    monkeypatch.setattr(c, "stream_process", fake_stream)
+    return commands
+
+
+def run_docker(**job):
+    shipper = Shipper()
+    result = c.update_docker_one(101, "app", {"ctids": [101], **job}, {"backup_storage": "backup"}, shipper)
+    return result, shipper.text
+
+
+def test_docker_update_updates_every_stack_then_removes_old_images(monkeypatch):
+    commands = docker_env(monkeypatch)
+    result, text = run_docker(cleanup=True)
+    assert result["ok"] is True and "2 stack(s) updated, Total reclaimed space: 1.2GB" in result["message"]
+    assert "1 container(s) not managed by Compose" in result["message"]
+    assert len(commands) == 3 and commands[2][-3:] == ["image", "prune", "-f"]    # the cleanup comes last
+    assert "update them by hand: manual (redis:7)" in text and "== stack web (web-app-1, web-db-1) ==" in text
+    assert "== finished: ok ==" in text
+
+
+def test_docker_update_keeps_old_images_when_cleanup_is_off(monkeypatch):
+    commands = docker_env(monkeypatch)
+    result, _ = run_docker(cleanup=False)
+    assert result["ok"] is True and len(commands) == 2 and not any("prune" in cmd for cmd in commands)
+
+
+def test_a_failed_stack_keeps_the_old_images(monkeypatch):
+    commands = docker_env(monkeypatch, fail=("/srv/mail",))
+    result, text = run_docker(cleanup=True)
+    assert result["ok"] is False and result["message"] == "failed: mail"
+    assert not any("prune" in cmd for cmd in commands)                            # nothing is deleted after a failure
+    assert "stack mail failed" in text and "== finished: failed ==" in text and "old images kept" in text
+
+
+def test_backup_runs_first_and_a_failed_backup_stops_everything(monkeypatch):
+    commands = docker_env(monkeypatch)
+    result, _ = run_docker(backup=True)
+    assert commands[0][:2] == ["vzdump", "101"] and "backup" in commands[0] and result["ok"] is True
+    commands = docker_env(monkeypatch, fail=("vzdump",))
+    result, text = run_docker(backup=True, cleanup=True)
+    assert result["ok"] is False and "backup failed" in result["message"]
+    assert len(commands) == 1 and "== finished: failed ==" in text                # no stack was touched
+
+
+def test_docker_update_reports_what_it_cannot_do(monkeypatch):
+    docker_env(monkeypatch, inventory="NODOCKER")
+    assert "not installed" in run_docker()[0]["message"]
+    docker_env(monkeypatch, inventory="|||/manual|redis:7")
+    result, text = run_docker()
+    assert result["ok"] is False and "no running Docker Compose stack" in result["message"] and "redis:7" in text
+
+
+def test_docker_update_of_several_containers(monkeypatch):
+    docker_env(monkeypatch)
+    monkeypatch.setattr(c, "list_containers", lambda: [("101", "running", "a"), ("102", "stopped", "b")])
+    shipper = Shipper()
+    results = c.update_docker({"ctids": [101, 102], "cleanup": False}, {"docker_update_workers": 1}, shipper)
+    assert [(r["label"], r["ok"]) for r in results] == [("CT 101 a", True), ("CT 102", False)]
+    assert "[CT 102] container stopped or not found" in shipper.text
+    nostorage = c.update_docker({"ctids": [101], "backup": True}, {}, Shipper())
+    assert nostorage[0]["label"] == "Backup" and nostorage[0]["ok"] is False
+
+
+# ---------------------------------------------------------------- several updates in one job
+
+def chain_env(monkeypatch, fail=(), inventory=INVENTORY):
+    """Fake the host: containers 101 and 102 run, every command goes through stream_process and is recorded."""
+    commands = docker_env(monkeypatch, inventory=inventory, fail=fail)
+    monkeypatch.setattr(c, "list_containers", lambda: [("101", "running", "a"), ("102", "running", "b")])
+    monkeypatch.setattr(c, "fetch_update_apps_script", lambda: "echo update")
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0, inventory))
+    return commands
+
+
+def run_chain(job, config=None):
+    shipper = Shipper()
+    results = c.update_chain(job, {"backup_storage": "backup", **(config or {})}, shipper)
+    return results, shipper.text
+
+
+def test_chain_runs_the_steps_in_a_fixed_order(monkeypatch):
+    commands = chain_env(monkeypatch)
+    job = {"actions": ["update_docker", "upgrade_os"], "targets": {"update_docker": [101], "upgrade_os": [101]},
+           "ctids": [101], "cleanup": False}
+    results, text = run_chain(job, {"docker_update_workers": 1})
+    assert results[0]["ok"] is True and results[0]["message"].startswith("system: ")
+    assert text.index("== system ==") < text.index("== Docker stacks ==")
+    assert commands[0][:4] == ["pct", "exec", "101", "--"] and "compose" in " ".join(commands[-1])  # system, then Docker
+    assert text.count("== finished: ok ==") == 1             # one end marker per container, not per step
+
+
+def test_chain_backs_up_once_before_the_first_step(monkeypatch):
+    commands = chain_env(monkeypatch)
+    job = {"actions": ["upgrade_os", "update_docker"], "targets": {"upgrade_os": [101], "update_docker": [101]},
+           "ctids": [101], "backup": True}
+    results, _ = run_chain(job)
+    assert results[0]["ok"] is True
+    assert commands[0][:2] == ["vzdump", "101"] and sum(cmd[0] == "vzdump" for cmd in commands) == 1
+
+
+def test_chain_without_apps_or_docker_ignores_the_backup(monkeypatch):
+    commands = chain_env(monkeypatch)
+    results, _ = run_chain({"actions": ["upgrade_os"], "targets": {"upgrade_os": [101]}, "ctids": [101], "backup": True},
+                           {"backup_storage": None})
+    assert results[0]["ok"] is True and not any(cmd[0] == "vzdump" for cmd in commands)
+
+
+def test_chain_stops_a_container_at_its_first_failure(monkeypatch):
+    commands = chain_env(monkeypatch, fail=("apt",))
+    monkeypatch.setattr(c, "UPGRADE_SCRIPT", "apt-get upgrade")
+    job = {"actions": ["upgrade_os", "update_docker"],
+           "targets": {"upgrade_os": [101, 102], "update_docker": [101]}, "ctids": [101, 102]}
+    results, text = run_chain(job, {"upgrade_workers": 1})
+    by_label = {r["label"]: r for r in results}
+    assert by_label["CT 101 a"]["ok"] is False and "not run: Docker stacks" in by_label["CT 101 a"]["message"]
+    assert not any("compose" in " ".join(cmd) for cmd in commands)    # the Docker step never started for 101
+    assert "Stopped after the system failure" in text
+    assert text.count("== finished: failed ==") == 2                  # 102 failed its own system step too
+
+
+def test_a_failure_in_one_container_does_not_stop_the_others(monkeypatch):
+    commands = chain_env(monkeypatch)
+    real = c.stream_process
+
+    def selective(cmd, prefix, shipper, timeout, env=None):
+        code, last, error = real(cmd, prefix, shipper, timeout, env)
+        return (1 if cmd[:3] == ["pct", "exec", "101"] else code), last, error
+
+    monkeypatch.setattr(c, "stream_process", selective)
+    job = {"actions": ["upgrade_os"], "targets": {"upgrade_os": [101, 102]}, "ctids": [101, 102]}
+    results, _ = run_chain({**job, "actions": ["upgrade_os", "update_docker"],
+                            "targets": {"upgrade_os": [101, 102], "update_docker": [102]}})
+    assert {r["label"]: r["ok"] for r in results} == {"CT 101 a": False, "CT 102 b": True}
+
+
+def test_chain_needs_the_backup_storage_and_skips_stopped_containers(monkeypatch):
+    chain_env(monkeypatch)
+    job = {"actions": ["update_apps", "update_docker"], "targets": {"update_apps": [101], "update_docker": [101]},
+           "ctids": [101], "backup": True}
+    assert run_chain(job, {"backup_storage": None})[0][0]["label"] == "Backup"
+    monkeypatch.setattr(c, "list_containers", lambda: [("101", "stopped", "a")])
+    results, text = run_chain({**job, "backup": False})
+    assert results[0]["message"] == "container stopped or not found" and "== finished: failed ==" in text
+
+
+def test_chain_apps_step_uses_the_official_script_without_its_own_backup(monkeypatch):
+    commands = chain_env(monkeypatch)
+    seen = []
+    real = c.stream_process
+
+    def spy(cmd, prefix, shipper, timeout, env=None):
+        if cmd[:2] == ["bash", "-c"]:
+            seen.append(env["var_backup"])
+        return real(cmd, prefix, shipper, timeout, env)
+
+    monkeypatch.setattr(c, "stream_process", spy)
+    job = {"actions": ["update_apps", "update_docker"], "targets": {"update_apps": [101], "update_docker": [101]},
+           "ctids": [101], "backup": True}
+    results, _ = run_chain(job)
+    assert results[0]["ok"] is True and seen == ["no"]         # vzdump already ran once at the start
+
+
+def test_run_job_dispatches_a_chain(monkeypatch):
+    calls = []
+    monkeypatch.setattr(c, "server_call", lambda *a, **k: {})
+
+    class ClosableShipper(Shipper):
+        def close(self):
+            pass
+
+    monkeypatch.setattr(c, "LogShipper", lambda config, job_id: ClosableShipper())
+    monkeypatch.setattr(c, "update_chain", lambda job, config, shipper: calls.append(job["actions"]) or [])
+    c.run_job({}, {"id": "j", "action": "update_chain", "actions": ["upgrade_os", "update_docker"], "ctids": []})
+    assert calls == [["upgrade_os", "update_docker"]]

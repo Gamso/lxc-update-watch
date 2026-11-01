@@ -7,8 +7,8 @@ and can apply them from the page, with a live console and an optional backup fir
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
-- Action buttons: system update (parallel), application update with the official
-  *PVE LXC Apps Update* script (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
+- Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
+  several in one go (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
   images are being checked, with a progress bar.
@@ -105,6 +105,7 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `pve_scripts_local` | `{"url": "http://<ct-ip>:3000"}`, needed for the *Refresh PVE scripts* button. |
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
+| `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
 | `registry_auth` | Credentials for private registries: `{"ghcr.io": {"username": "...", "token": "..."}}`. |
 
 Environment of the web service (`/etc/lxc-update-watch.env`):
@@ -151,9 +152,10 @@ Only needed for what the automatic detection does not cover.
 | `pve_script` / `pve_repo` | Optional; read the version a helper script pins instead of using the latest release. |
 | `update_cmd` | Optional; command shown on the page to update the application. |
 
-## Action buttons
+## Updates
 
-A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
+The *Choose updates* menu (top left of the page) lists the three updates below with the number of containers
+concerned; tick one or several, then press *Run*. A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
 output to the page's console, with one tab per container (waiting, running, ok or failed) and a color per
 container in the *All* view. There is no password: anyone who can open the page can start them (see the security
 notes below).
@@ -165,14 +167,80 @@ notes below).
   *Back up before updating applications* option of the Options menu (gear icon, remembered by the browser) runs a
   `vzdump` before each update. Containers that need a reboot are listed in the console.
   Add-ons have no `update` command: the page shows the command to run inside the container.
+- **Update Docker stacks** is for the containers that have a Docker image with a newer version. Inside each container
+  it finds the Docker Compose stacks of the running containers (Compose records the project directory and files in
+  labels on every container it creates), then runs `docker compose pull` and `docker compose up -d` for each one: only
+  the services whose image changed are recreated, and volumes are never touched. Containers started another way
+  (`docker run`) cannot be recreated safely and are listed as "to update by hand". If a stack fails, nothing is
+  removed. With *Remove old Docker images after updating Docker stacks* (Options menu, on by default) the collector
+  then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
+  and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
+  applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
+- **Several at once.** The ticked updates form one job. The containers run in parallel (as many as the smallest of
+  the workers settings of the ticked updates), but each container goes through the steps one after the other, always
+  in this order: system, applications, Docker stacks. With the backup option, a container is backed up once, before its
+  first step. A container stops at its first failed step (the rest is shown as not run in its console tab); the other
+  containers carry on.
 - **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 
-Security notes: **the page has no login**. Anyone who can open it can read the state and the console output, and
-can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the host
-through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and requests
-must be JSON so a cross-site form cannot trigger one. Keep the page on your local network, or put an authenticating
-reverse proxy (Authelia, Cloudflare Access, a VPN...) in front of it before exposing it to the Internet.
+Security notes: **by default the page has no login**. Anyone who can open it can read the state and the console
+output, and can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the
+host through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and
+requests must be JSON so a cross-site form cannot trigger one. Either keep the page on your local network, turn on
+the optional OpenID Connect login below, or put an authenticating reverse proxy in front of it.
+
+### Optional login with OpenID Connect
+
+Set `OIDC_ISSUER` in `/etc/lxc-update-watch.env` to require a sign-in with any OpenID Connect provider (Authelia,
+Keycloak, Authentik...). Without it nothing changes. Once enabled, every page and API used by a browser needs a
+signed-in user; the collector keeps using its `LXC_WATCH_TOKEN`, and `/healthz` stays open.
+
+| Variable | Meaning |
+| --- | --- |
+| `OIDC_ISSUER` | Issuer URL of the provider, for example `https://auth.example.com`. Setting it turns the login on. |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Client registered at the provider (required). |
+| `OIDC_REDIRECT_URI` | Public address of the callback, `https://lxc.example.com/auth/callback` (required; it must match the provider's configuration exactly). |
+| `OIDC_ALLOWED_GROUPS`, `OIDC_ALLOWED_USERS` | Optional, comma separated. When either is set, only these groups or users (user name or e-mail) get in. When both are empty, every user the provider authenticates is accepted. |
+| `OIDC_SCOPES` | Default `openid profile email groups`. |
+| `OIDC_TOKEN_AUTH_METHOD` | Default `client_secret_basic`; use `client_secret_post` if the provider's client is set up that way. |
+| `LXC_WATCH_SECRET_KEY` | Optional key signing the session cookie; derived from `LXC_WATCH_TOKEN` when unset. |
+
+Example with Authelia. In Authelia's `configuration.yml` (the secret is stored hashed, e.g. with
+`authelia crypto hash generate pbkdf2 --variant sha512`):
+
+```yaml
+identity_providers:
+  oidc:
+    clients:
+      - client_id: lxc-update-watch
+        client_name: LXC update watch
+        client_secret: '$pbkdf2-sha512$...'
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://lxc.example.com/auth/callback
+        scopes: [openid, profile, email, groups]
+        token_endpoint_auth_method: client_secret_basic
+```
+
+then in `/etc/lxc-update-watch.env` of the web service (the plain secret), followed by
+`systemctl restart lxc-update-watch`:
+
+```
+OIDC_ISSUER=https://auth.example.com
+OIDC_CLIENT_ID=lxc-update-watch
+OIDC_CLIENT_SECRET=the-plain-secret
+OIDC_REDIRECT_URI=https://lxc.example.com/auth/callback
+OIDC_ALLOWED_GROUPS=admins
+```
+
+Notes: the web service must reach the provider (it fetches `/.well-known/openid-configuration` at the first login)
+and the provider must be served over HTTPS in practice; the page itself should be reached through the HTTPS address
+of `OIDC_REDIRECT_URI` (reverse proxy), which also makes the session cookie `Secure`. The session lasts 12 hours.
+*Sign out* in the Options menu ends the page's session only, not the one at the provider: a page confirms it, and
+*Sign in again* signs you straight back in while the provider's session is open (sign out of Authelia too to change user). If the provider is
+down nobody can sign in to the page, but the collector keeps reporting.
 
 ## Languages
 

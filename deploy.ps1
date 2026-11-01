@@ -53,8 +53,11 @@ $Manifest = @(
     @{ Component = 'collector'; Where = 'host'; Local = 'deploy\lxc-collect-poll.timer';   Remote = '/etc/systemd/system/lxc-collect-poll.timer' }
     @{ Component = 'service';   Where = 'ct';   Local = 'VERSION';                         Remote = '/opt/lxc-update-watch/VERSION' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\app.py';                   Remote = '/opt/lxc-update-watch/server/app.py' }
+    @{ Component = 'service';   Where = 'ct';   Local = 'server\auth.py';                  Remote = '/opt/lxc-update-watch/server/auth.py' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\i18n.py';                  Remote = '/opt/lxc-update-watch/server/i18n.py' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\templates\index.html';     Remote = '/opt/lxc-update-watch/server/templates/index.html' }
+    @{ Component = 'service';   Where = 'ct';   Local = 'server\static\app.js';             Remote = '/opt/lxc-update-watch/server/static/app.js' }
+    @{ Component = 'service';   Where = 'ct';   Local = 'server\static\style.css';         Remote = '/opt/lxc-update-watch/server/static/style.css' }
     @{ Component = 'service';   Where = 'ct';   Local = 'server\requirements.txt';         Remote = '/opt/lxc-update-watch/server/requirements.txt' }
     @{ Component = 'service';   Where = 'ct';   Local = 'deploy\lxc-update-watch.service'; Remote = '/opt/lxc-update-watch/deploy/lxc-update-watch.service' }
 )
@@ -193,7 +196,7 @@ function Test-LocalFiles {
     }
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) {
-        foreach ($rel in 'collector\lxc_collect.py', 'server\app.py', 'server\i18n.py') {
+        foreach ($rel in 'collector\lxc_collect.py', 'server\app.py', 'server\auth.py', 'server\i18n.py') {
             & python -c "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())" (Join-Path $Root $rel)
             if ($LASTEXITCODE -ne 0) { throw "Python syntax error in $rel" }
         }
@@ -254,7 +257,7 @@ APP=/opt/lxc-update-watch
 set -e
 pct status $CT | grep -q running || { echo "ERROR: CT $CT is not running."; exit 1; }
 pct exec $CT -- mkdir -p $APP
-pct exec $CT -- sh -c "cd $APP/server 2>/dev/null && for f in app.py i18n.py templates/index.html; do [ -f \"\$f\" ] && cp -p \"\$f\" \"\$f.bak-$TS\"; done; for f in app.py i18n.py templates/index.html; do ls -1t \"\$f\".bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f; done; true"
+pct exec $CT -- sh -c "cd $APP/server 2>/dev/null && for f in app.py auth.py i18n.py templates/index.html static/app.js static/style.css; do [ -f \"\$f\" ] && cp -p \"\$f\" \"\$f.bak-$TS\"; done; for f in app.py auth.py i18n.py templates/index.html static/app.js static/style.css; do ls -1t \"\$f\".bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f; done; true"
 chmod -R u=rwX,go=rX "$STAGE"
 tar -C "$STAGE" -cf - server deploy VERSION | pct exec $CT -- tar -C $APP -xf -
 pct exec $CT -- chmod 755 $APP

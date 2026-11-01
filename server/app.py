@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
 
+import auth
 from i18n import COOKIE, LANGUAGE_NAMES, SUPPORTED, Translator, pick_language
 
 STATE_FILE = Path(os.environ.get("LXC_WATCH_DATA", "data")) / "state.json"
@@ -17,7 +18,10 @@ JOB_FILE = STATE_FILE.with_name("job.json")
 LOG_FILE = STATE_FILE.with_name("job.log")
 PROGRESS_FILE = STATE_FILE.with_name("progress.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
-JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps"}
+JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps", "update_docker"}
+# Actions that change the containers: a full check of them follows, and a backup can be taken first.
+CONTAINER_ACTIONS = ("upgrade_os", "update_apps", "update_docker")
+BACKUP_ACTIONS = ("update_apps", "update_docker")
 LOG_MAX_BYTES = 1_000_000
 PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
 CHECK_STEPS = ("system", "app", "docker")
@@ -37,6 +41,11 @@ def read_version():
 VERSION = read_version()
 
 app = Flask(__name__)
+
+# Endpoints used by the collector (shared token): the optional OIDC login does not apply to them.
+COLLECTOR_ENDPOINTS = {"api_report", "api_refresh_pending", "api_progress_post", "api_jobs_pending", "api_job_start",
+                       "api_job_result", "api_job_log_append"}
+app.before_request(auth.guard)
 
 
 # ---------------------------------------------------------------- storage
@@ -117,6 +126,12 @@ def job_is_active(job):
     return age.total_seconds() < JOB_MAX_AGE_H * 3600
 
 
+def docker_updatable_containers(state):
+    """Running containers with at least one Docker image (not built locally) that has a newer version."""
+    return [ct for ct in state["containers"]
+            if ct["status"] == "running" and pending_flags(ct)[2]]
+
+
 def app_updatable_containers(state):
     """Containers whose application has an update AND that have the `update` command of a helper script."""
     return [ct for ct in state["containers"]
@@ -126,6 +141,21 @@ def app_updatable_containers(state):
 def upgradable_containers(state):
     return [ct for ct in state["containers"]
             if ct["status"] == "running" and ct.get("os") in UPGRADABLE_OS and (ct.get("os_updates") or 0) > 0]
+
+
+CONTAINER_LISTS = {"upgrade_os": upgradable_containers, "update_apps": app_updatable_containers,
+                   "update_docker": docker_updatable_containers}
+
+
+def job_title(job, tr):
+    """Name of a job in the page's language: one action, or the list of steps of a combined update."""
+    if not job:
+        return ""
+    suffix = "_backup" if job.get("backup") else ""
+    if job["action"] == "update_chain":
+        steps = ", ".join(tr(f"chain_{action}") for action in job["actions"])
+        return tr(f"job_update_chain{suffix}", steps=steps)
+    return tr(f"job_{job['action']}{suffix}")
 
 
 def job_for_collector(job_id):
@@ -221,8 +251,10 @@ def build_view(state, tr):
         "refreshing": refresh_requested_at() is not None,
         "upgradable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in upgradable_containers(state)],
         "app_updatable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in app_updatable_containers(state)],
+        "docker_updatable": [{"ctid": ct["ctid"], "name": ct["name"]} for ct in docker_updatable_containers(state)],
         "backup_storage": state.get("backup_storage"),
         "job": job,
+        "job_title": job_title(job, tr),
         "job_active": job_is_active(job),
         "job_containers": [{"ctid": ctid, "name": names.get(ctid, "")} for ctid in (job or {}).get("ctids", [])],
         "pending": pending,
@@ -254,12 +286,70 @@ def index():
     state = load_state()
     return render_template("index.html", view=build_view(state, tr) if state else None, t=tr, lang=tr.lang,
                            languages=[(code, LANGUAGE_NAMES[code]) for code in SUPPORTED],
-                           i18n=tr.browser_strings(), version=VERSION)
+                           i18n=tr.browser_strings(), version=VERSION,
+                           login=bool(app.config.get("OIDC")), user=auth.current_user())
 
 
 @app.get("/healthz")
 def healthz():
     return "ok"
+
+
+# ---------------------------------------------------------------- optional OIDC login
+
+def login_enabled_or_404():
+    if not app.config.get("OIDC"):
+        abort(404)
+
+
+def login_error(denied):
+    tr = translator()
+    text = tr("login_denied") if denied else tr("login_failed")
+    return make_response(text + "\n", 403 if denied else 400, {"Content-Type": "text/plain; charset=utf-8"})
+
+
+@app.get("/auth/login")
+def oidc_login():
+    login_enabled_or_404()
+    return auth.login(app.config)
+
+
+@app.get("/auth/callback")
+def oidc_callback():
+    login_enabled_or_404()
+    user, error = auth.callback(app.config)
+    if error:
+        return login_error(error == "denied")
+    return redirect(url_for("index"))
+
+
+@app.post("/auth/logout")
+def oidc_logout():
+    login_enabled_or_404()
+    session.clear()
+    return redirect(url_for("oidc_logged_out"))
+
+
+SIGNED_OUT_PAGE = """<!doctype html>
+<html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<style>:root{{--bg:#f6f6f4;--fg:#1c1c1a;--line:#e2e2dd;--card:#fff}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#161615;--fg:#ececE8;--line:#34342f;--card:#1f1f1d}}}}
+body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}}
+main{{text-align:center;padding:24px}}a{{display:inline-block;margin-top:12px;color:var(--fg);background:var(--card);
+border:1px solid var(--line);border-radius:8px;padding:8px 16px;text-decoration:none}}</style></head>
+<body><main><p>{message}</p><a href="{href}">{link}</a></main></body></html>
+"""
+
+
+@app.get("/auth/logged-out")
+def oidc_logged_out():
+    """Shown after signing out. Going straight back to the page would sign the user in again, because the identity
+    provider keeps its own session."""
+    login_enabled_or_404()
+    tr = translator()
+    return make_response(SIGNED_OUT_PAGE.format(lang=tr.lang, title=tr("page_title"), message=tr("signed_out"),
+                                                href=url_for("oidc_login"), link=tr("sign_in_again")))
 
 
 # ---------------------------------------------------------------- API: reports and refresh
@@ -399,29 +489,32 @@ def api_actions():
     # No password: access control belongs to the network or a reverse proxy. The body must be JSON, which a
     # cross-site form cannot send (and a cross-site fetch would need a CORS preflight this service never answers).
     body = request.get_json(silent=True) or {}
-    action = body.get("action")
-    if action not in JOB_ACTIONS:
+    asked = body["actions"] if isinstance(body.get("actions"), list) else [body.get("action")]
+    actions = [a for a in CONTAINER_ACTIONS + ("update_pve_scripts",) if a in asked]  # fixed order, no duplicates
+    if not all(isinstance(a, str) for a in asked) or not actions or len(asked) != len(set(asked)) or any(a not in JOB_ACTIONS for a in asked) or             ("update_pve_scripts" in actions and len(actions) > 1):
         api_error(400, "unknown_action", "unknown action")
     state = load_state()
     if not state:
         api_error(400, "no_report", "no report received yet")
     if job_is_active(load_job()):
         api_error(409, "job_running", "a job is already running")
-    ctids = []
-    if action == "upgrade_os":
-        ctids = [ct["ctid"] for ct in upgradable_containers(state)]
-    elif action == "update_apps":
-        ctids = [ct["ctid"] for ct in app_updatable_containers(state)]
-    if action in ("upgrade_os", "update_apps") and not ctids:
+    targets = {a: [ct["ctid"] for ct in CONTAINER_LISTS[a](state)] for a in actions if a in CONTAINER_LISTS}
+    targets = {a: ctids for a, ctids in targets.items() if ctids}
+    if actions != ["update_pve_scripts"] and not targets:
         api_error(400, "no_containers", "no container to update")
-    backup = bool(body.get("backup")) and action == "update_apps"
+    actions = [a for a in actions if a in targets] or actions
+    backup = bool(body.get("backup")) and any(a in BACKUP_ACTIONS for a in actions)
+    cleanup = bool(body.get("cleanup")) and "update_docker" in actions   # remove the old images afterwards
     if backup and not state.get("backup_storage"):
         api_error(400, "backup_not_configured", "backup_storage is not set in the collector config")
-    job = {"id": uuid.uuid4().hex, "action": action, "ctids": ctids, "status": "pending", "backup": backup,
-           "requested_at": now_iso(), "results": []}
+    job = {"id": uuid.uuid4().hex, "action": actions[0], "ctids": targets.get(actions[0], []), "status": "pending",
+           "backup": backup, "cleanup": cleanup, "requested_at": now_iso(), "results": []}
+    if len(actions) > 1:  # several updates: each container runs its steps one after the other
+        job.update(action="update_chain", actions=actions, targets=targets,
+                   ctids=sorted({ctid for ctids in targets.values() for ctid in ctids}))
     LOG_FILE.unlink(missing_ok=True)
     write_json(JOB_FILE, job)
-    if action in ("upgrade_os", "update_apps"):
+    if actions[0] in CONTAINER_ACTIONS:
         request_refresh()  # the list must be checked again once the updates are installed
     return jsonify(job), 202
 
@@ -479,3 +572,12 @@ def api_job_log_read(job_id):
         text = ""
     offset = max(request.args.get("offset", 0, type=int), 0)
     return jsonify(text=text[offset:], offset=len(text), status=job["status"])
+
+
+def configure_login():
+    settings = auth.Settings.from_env(os.environ)
+    if settings:
+        auth.enable(app, settings, COLLECTOR_ENDPOINTS)
+
+
+configure_login()

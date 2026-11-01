@@ -4,87 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ t('page_title') }}</title>
-<style>
-:root{--bg:#f6f6f4;--card:#fff;--line:#e2e2dd;--fg:#1c1c1a;--muted:#6b6b66;
---w-bg:#fbeed0;--w-fg:#7a4a06;--s-bg:#dff2e1;--s-fg:#1f6b2e;--n-bg:#ececE8;--n-fg:#55554f}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#1f1f1d;--line:#34342f;--fg:#ececE8;--muted:#9a9a93;
---w-bg:#4a3510;--w-fg:#f6cf80;--s-bg:#17361d;--s-fg:#8fd69c;--n-bg:#2b2b28;--n-fg:#b5b5ad}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
-main{max-width:900px;margin:0 auto;padding:24px 16px}
-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 4px}
-h1{font-size:22px;font-weight:500;margin:0}
-.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0}
-.icon-btn svg{width:18px;height:18px}
-.side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-#options-dialog{width:min(380px,92vw)}
-.dlg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.dlg-head strong{font-size:16px;font-weight:500}
-.opt-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;font-size:14px}
-.opt-row label{margin:0;display:inline-flex;align-items:center;gap:8px}
-.opt-row select{font:inherit;font-size:13px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
-.sub{color:var(--muted);font-size:13px;margin:0}
-footer{margin-top:28px;text-align:center}
-.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-8px 0 16px}
-dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(340px,90vw)}
-dialog::backdrop{background:rgba(0,0,0,.5)}
-dialog label{display:block;font-size:14px;margin-bottom:8px}
-dialog input:not([type=checkbox]){width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.job{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px}
-#console-box summary{cursor:pointer;font-size:13px;color:var(--muted);margin-top:8px}
-#console{margin:8px 0 0;padding:10px 12px;background:#0d0d0c;color:#d4d4cf;border-radius:8px;font:12px/1.5 ui-monospace,monospace;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-#console .c30,#console .c90{color:#9aa0a6}#console .c31,#console .c91{color:#f28b82}#console .c32,#console .c92{color:#81c995}
-#console .c33,#console .c93{color:#fdd663}#console .c34,#console .c94{color:#8ab4f8}#console .c35,#console .c95{color:#d7aefb}
-#console .c36,#console .c96{color:#78d9ec}#console .c37,#console .c97{color:#e8eaed}#console .b1{font-weight:600}
-.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
-.tabs button{font-size:12px;padding:3px 10px;display:inline-flex;align-items:center}
-.tabs button.on{border-color:var(--fg)}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--line)}
-.dot.running{background:var(--w-fg);animation:pulse 1s ease-in-out infinite}
-.dot.ok{background:#4caf50}.dot.failed{background:#e24d4d}
-@keyframes pulse{50%{opacity:.3}}
-#console .ln[hidden]{display:none}
-#console .ct-tag.k0{color:#8ab4f8}#console .ct-tag.k1{color:#f6a96b}#console .ct-tag.k2{color:#81c995}
-#console .ct-tag.k3{color:#d7aefb}#console .ct-tag.k4{color:#fdd663}#console .ct-tag.k5{color:#78d9ec}
-.job p{margin:0 0 2px}.res{font-size:13px;color:var(--muted)}.res.ko{color:var(--w-fg)}
-.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 20px}
-button{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
-button:hover:not(:disabled){border-color:var(--muted)}button:disabled{color:var(--muted);cursor:default}
-.banner{background:var(--w-bg);color:var(--w-fg);padding:8px 12px;border-radius:8px;margin-bottom:16px;font-size:14px}
-.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:8px}
-.metrics div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
-.metrics small{display:block;color:var(--muted);font-size:13px}
-.metrics strong{font-size:24px;font-weight:500}
-h2{font-size:12px;font-weight:400;color:var(--muted);margin:20px 0 8px}
-.row{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
-.row.quiet{background:transparent;color:var(--muted)}
-.line{display:grid;grid-template-columns:48px minmax(0,1fr) 150px minmax(0,300px);gap:10px;align-items:center;padding:10px 14px}
-summary.line{cursor:pointer;list-style:none}
-summary.line::-webkit-details-marker{display:none}
-.name{font-weight:500;overflow:hidden;text-overflow:ellipsis}
-.quiet .name{font-weight:400}
-.badges{display:flex;flex-direction:column;gap:4px;align-items:flex-start;min-width:0}
-.b{display:inline-block;font-size:12px;padding:2px 8px;border-radius:8px;max-width:100%;overflow-wrap:anywhere}
-.b.w{background:var(--w-bg);color:var(--w-fg)}.b.s{background:var(--s-bg);color:var(--s-fg)}.b.n{background:var(--n-bg);color:var(--n-fg)}
-.detail{padding:2px 14px 12px 72px;font:13px/1.6 ui-monospace,monospace;color:var(--muted)}
-.detail code{color:var(--fg)}
-#progress{margin:-8px 0 16px}
-#progress .track{height:4px;background:var(--line);border-radius:4px;overflow:hidden}
-#progress .fill{height:100%;width:0;background:var(--fg);border-radius:4px;transition:width .5s ease}
-#progress p{margin:6px 0 0}
-.spin::before{content:"";display:inline-block;width:10px;height:10px;margin-right:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-1px;animation:spin .8s linear infinite}
-.checking{display:inline-block;font-size:12px;padding:2px 8px;border-radius:8px;color:var(--muted);background:linear-gradient(90deg,var(--n-bg) 25%,var(--line) 50%,var(--n-bg) 75%);background-size:300% 100%;animation:shimmer 1.4s linear infinite}
-.is-queued .b{opacity:.4}
-.b{transition:opacity .3s}
-.b.pop{animation:pop .5s ease-out}
-.row.flash{animation:flash 1.8s ease-out}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
-@keyframes pop{0%{opacity:0;transform:scale(.8)}60%{opacity:1;transform:scale(1.08)}100%{transform:scale(1)}}
-@keyframes flash{0%{box-shadow:0 0 0 3px var(--w-bg);border-color:var(--w-fg)}100%{box-shadow:0 0 0 0 transparent}}
-@media (prefers-reduced-motion:reduce){.checking,.spin::before,.b.pop,.row.flash{animation:none}#progress .fill{transition:none}}
-@media (max-width:640px){.line{grid-template-columns:40px minmax(0,1fr)}.line>:nth-child(n+3){grid-column:2}.detail{padding-left:14px}}
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version) }}">
 </head>
 <body>
 <main>
@@ -99,11 +19,16 @@ summary.line::-webkit-details-marker{display:none}
 <select id="lang-select" name="lang" onchange="this.form.submit()">{% for code, name in languages %}<option value="{{ code }}"{% if code == lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>
 <noscript><button type="submit">OK</button></noscript>
 </form>
+{% if login and user %}
+<div class="opt-row"><span class="sub">{{ t('signed_in_as', user=user) }}</span>
+<form method="post" action="/auth/logout"><button type="submit">{{ t('sign_out') }}</button></form></div>
+{% endif %}
 {% if view %}
 <div class="opt-row">
 {% if view.backup_storage %}<label><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
 {% else %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
 </div>
+<div class="opt-row"><label><input type="checkbox" id="opt-cleanup" checked> {{ t('opt_cleanup') }}</label></div>
 {% endif %}
 </dialog>
 {% if not view %}
@@ -119,13 +44,20 @@ summary.line::-webkit-details-marker{display:none}
 <p class="sub" id="msg" aria-live="polite"></p>
 <div id="progress" hidden><div class="track"><div class="fill"></div></div><p class="sub" id="progress-text" aria-live="polite"></p></div>
 <div class="actions">
-<button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
-<button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
+<details id="act-picker" class="picker"{% if view.job_active %} inert{% endif %}>
+<summary id="act-summary">{{ t('update_choose') }}</summary>
+<div class="menu">
+{% for action, key, label, items in [('upgrade_os', 'btn_upgrade_os', 'chain_upgrade_os', view.upgradable), ('update_apps', 'btn_update_apps', 'chain_update_apps', view.app_updatable), ('update_docker', 'btn_update_docker', 'chain_update_docker', view.docker_updatable)] %}
+<label{% if not items %} class="off"{% endif %}><input type="checkbox" value="{{ action }}" data-label="{{ t(label) }}" data-names="{{ items|map(attribute='name')|join(', ') }}"{% if not items %} disabled{% endif %}> {{ t(key, n=items|length) }}</label>
+{% endfor %}
+</div>
+</details>
+<button id="act-run" type="button" disabled>{{ t('update_run') }}</button>
 </div>
 {% if view.job %}
 {% set j = view.job %}
 <div class="job">
-<p><strong>{{ t('job_update_apps_backup' if j.action == 'update_apps' and j.backup else 'job_' ~ j.action) }}</strong> ·
+<p><strong>{{ view.job_title }}</strong> ·
 {% if j.status == 'pending' %}{{ t('job_pending') }}
 {% elif j.status == 'running' %}{{ t('job_running') }}
 {% elif j.ok %}{{ t('job_done_ok') }}
@@ -182,231 +114,10 @@ summary.line::-webkit-details-marker{display:none}
 <footer class="sub">lxc-update-watch v{{ version }}{% if view and view.collector_version %} · collector v{{ view.collector_version }}{% endif %}</footer>
 </main>
 {% if view %}
-<script>
-(function () {
-  var I18N = {{ i18n|tojson }};
-  function fmt(template, values) {
-    return template.replace(/\{(\w+)\}/g, function (_, key) { return key in values ? values[key] : '{' + key + '}'; });
-  }
-  var btn = document.getElementById('refresh'), sub = document.getElementById('sub');
-  var lastCheck = {{ view.checked_raw|tojson }}, timer = null;
-  var jobId = {{ (view.job.id if view.job else None)|tojson }}, jobStatus = {{ (view.job.status if view.job else None)|tojson }};
-
-  function waiting() {
-    btn.disabled = true;
-    btn.textContent = I18N.checking;
-    btn.classList.add('spin');
-    sub.textContent = I18N.check_starts;
-    watch();
-    startProgress();
-  }
-  function watch() { if (!timer) timer = setInterval(poll, 5000); }
-  function poll() {
-    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (s.job_id !== jobId || s.job !== jobStatus || (!s.refreshing && s.checked_at !== lastCheck)) reloadKeepingConsole();
-    }).catch(function () {});
-  }
-
-  var msg = document.getElementById('msg');
-  function act(action, question, extra) {
-    if (!window.confirm(question)) return;
-    msg.textContent = '';
-    fetch('/api/actions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ action: action }, extra || {}))
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (body) {
-        if (!r.ok) throw new Error((body.code && I18N.api_err[body.code]) || body.error || I18N.request_refused);
-        location.reload();
-      });
-    }).catch(function (e) { msg.textContent = e.message; });
-  }
-
-  var os = document.getElementById('act-os'), pve = document.getElementById('act-pve');
-  if (os) os.addEventListener('click', function () {
-    act('upgrade_os', fmt(I18N.js_confirm_os, { names: os.dataset.names }));
-  });
-  if (pve) pve.addEventListener('click', function () { act('update_pve_scripts', I18N.js_confirm_pve); });
-  var apps = document.getElementById('act-apps'), backup = document.getElementById('opt-backup');
-  if (backup) {  // the choice is remembered by this browser
-    try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
-    backup.addEventListener('change', function () {
-      try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
-    });
-  }
-  if (apps) apps.addEventListener('click', function () {
-    var withBackup = !!(backup && backup.checked);
-    act('update_apps', fmt(I18N.js_confirm_apps, { names: apps.dataset.names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
-      { backup: withBackup });
-  });
-
-  // Live console: the collector streams the job output to the service and the page polls it. A line starting with
-  // "[CT n]" belongs to container n: the tabs filter by container and show where each container stands.
-  var consoleEl = document.getElementById('console'), tabsEl = document.getElementById('console-tabs');
-  var logOffset = 0, style = { fg: '', bold: false }, partial = '', activeCt = '', ctState = {}, ctColor = {};
-  var tabs = tabsEl ? [].slice.call(tabsEl.querySelectorAll('button[data-ct]')) : [];
-  tabs.forEach(function (tab, i) {
-    if (tab.dataset.ct) { ctState[tab.dataset.ct] = 'waiting'; ctColor[tab.dataset.ct] = 'k' + ((i - 1) % 6); }
-    tab.addEventListener('click', function () { selectTab(tab.dataset.ct); });
-  });
-  function selectTab(ct) {
-    activeCt = ct;
-    tabs.forEach(function (tab) {
-      var on = tab.dataset.ct === ct;
-      tab.classList.toggle('on', on);
-      tab.setAttribute('aria-selected', on ? 'true' : 'false');
-    });
-    [].forEach.call(consoleEl.children, function (line) { line.hidden = ct !== '' && line.dataset.ct !== ct; });
-    consoleEl.scrollTop = consoleEl.scrollHeight;
-  }
-  function setState(ct, state) {
-    if (!(ct in ctState) || ctState[ct] === 'ok' || ctState[ct] === 'failed') return;
-    ctState[ct] = state;
-    var tab = tabs.filter(function (t) { return t.dataset.ct === ct; })[0];
-    if (tab) tab.querySelector('.dot').className = 'dot ' + state;
-  }
-  function appendStyled(parent, text) {
-    var parts = text.replace(/\x1b\[[0-9;?]*[A-Za-ln-z]/g, '').split(/(\x1b\[[0-9;]*m)/);
-    parts.forEach(function (part) {
-      var sgr = /^\x1b\[([0-9;]*)m$/.exec(part);
-      if (sgr) {
-        (sgr[1] || '0').split(';').forEach(function (code) {
-          var c = +code;
-          if (c === 0) { style.fg = ''; style.bold = false; }
-          else if (c === 1) style.bold = true;
-          else if (c === 22) style.bold = false;
-          else if (c === 39) style.fg = '';
-          else if ((c >= 30 && c <= 37) || (c >= 90 && c <= 97)) style.fg = 'c' + c;
-        });
-      } else if (part) {
-        var span = document.createElement('span');
-        span.textContent = part;
-        span.className = (style.fg + (style.bold ? ' b1' : '')).trim();
-        parent.appendChild(span);
-      }
-    });
-  }
-  function addLine(text) {
-    var line = document.createElement('div'), tag = /^\[CT (\d+)\] /.exec(text), ct = tag ? tag[1] : '', rest = text;
-    line.className = 'ln';
-    line.dataset.ct = ct;
-    if (tag) {
-      var label = document.createElement('span');
-      label.className = 'ct-tag ' + (ctColor[ct] || 'k0');
-      label.textContent = tag[0];
-      line.appendChild(label);
-      rest = text.slice(tag[0].length);
-      var done = /== finished: (ok|failed) ==/.exec(rest.replace(/\x1b\[[0-9;]*m/g, ''));
-      setState(ct, done ? done[1] : 'running');
-    }
-    appendStyled(line, rest);
-    line.hidden = activeCt !== '' && ct !== activeCt;
-    consoleEl.appendChild(line);
-  }
-  function pullLog() {
-    if (!consoleEl || !jobId) return;
-    fetch('/api/jobs/' + jobId + '/log?offset=' + logOffset).then(function (r) { return r.json(); }).then(function (d) {
-      var nearBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
-      var lines = (partial + (d.text || '')).split('\n');
-      partial = lines.pop();  // the last line may be incomplete: it is completed by the next poll
-      lines.forEach(function (text) { if (text) addLine(text); });
-      logOffset = d.offset;
-      if (d.status === 'done') {
-        if (partial) { addLine(partial); partial = ''; }
-        Object.keys(ctState).forEach(function (ct) { setState(ct, 'failed'); });  // never finished: interrupted
-      }
-      if (lines.length && nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
-    }).catch(function () {});
-  }
-  // The page reloads itself when a job or a check ends: keep the console open on the same tab for the same job.
-  function reloadKeepingConsole() {
-    try {
-      var box = document.getElementById('console-box');
-      if (box && jobId) sessionStorage.setItem('lxcw_console', JSON.stringify({ job: jobId, open: box.open, ct: activeCt }));
-    } catch (e) {}
-    location.reload();
-  }
-  try {
-    var savedConsole = JSON.parse(sessionStorage.getItem('lxcw_console') || 'null');
-    sessionStorage.removeItem('lxcw_console');
-    if (savedConsole && savedConsole.job === jobId && consoleEl) {
-      document.getElementById('console-box').open = savedConsole.open;
-      if (savedConsole.ct && tabs.length) selectTab(savedConsole.ct);
-    }
-  } catch (e) {}
-  pullLog();
-  {% if view.job_active %}setInterval(pullLog, 2000);
-  watch();{% endif %}
-
-  // Live check: the collector reports every step of every container and each row animates as the results arrive.
-  var progressBox = document.getElementById('progress'), progressFill = progressBox.querySelector('.fill');
-  var progressText = document.getElementById('progress-text'), progressTimer = null, rowSeen = {};
-  function badgeNode(item) {
-    var node = document.createElement('span');
-    node.className = 'b ' + item.kind + ' pop';
-    node.textContent = item.text;
-    node.title = item.text;
-    return node;
-  }
-  function checkingNode(label) {
-    var node = document.createElement('span');
-    node.className = 'checking';
-    node.textContent = label;
-    return node;
-  }
-  function paint(cell, nodes) { cell.replaceChildren.apply(cell, nodes); }
-  function applyProgress(d) {
-    progressBox.hidden = false;
-    progressFill.style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + '%';
-    progressText.textContent = fmt(I18N.live_progress, { done: d.done, total: d.total });
-    Object.keys(d.containers).forEach(function (ctid) {
-      var c = d.containers[ctid], row = document.querySelector('[data-ctid="' + ctid + '"]');
-      if (!row || c.status !== 'running') return;
-      var sysCell = row.querySelector('.sys-cell'), appCell = row.querySelector('.app-cell');
-      var seen = rowSeen[ctid] || (rowSeen[ctid] = {});
-      row.classList.toggle('is-queued', c.steps.system === 'queued');
-      if (c.steps.system === 'running' && seen.system !== 'running') paint(sysCell, [checkingNode(I18N.step_system)]);
-      if (c.steps.system === 'done' && seen.system !== 'done' && c.sys) paint(sysCell, [badgeNode(c.sys)]);
-      seen.system = c.steps.system;
-      if (c.steps.app !== 'queued') {
-        var appKey = c.steps.app + '/' + c.steps.docker + '/' + JSON.stringify(c.apps || []);
-        if (seen.app !== appKey) {
-          var nodes = (c.apps || []).map(badgeNode);
-          if (c.steps.app === 'running') nodes.push(checkingNode(I18N.step_app));
-          else if (c.steps.docker === 'running') nodes.push(checkingNode(I18N.step_docker));
-          if (nodes.length) paint(appCell, nodes);
-          seen.app = appKey;
-        }
-      }
-      var finished = c.steps.system === 'done' && c.steps.app === 'done' && c.steps.docker === 'done';
-      if (finished && c.pending && !seen.flashed) { row.classList.add('flash'); seen.flashed = true; }
-    });
-  }
-  function pullProgress() {
-    fetch('/api/progress').then(function (r) { return r.json(); }).then(function (d) {
-      if (d.checked_at !== lastCheck) {  // the report is complete: show the final, re-sorted page
-        clearInterval(progressTimer);
-        setTimeout(reloadKeepingConsole, 900);
-      } else if (d.active) {
-        startProgress();
-        applyProgress(d);
-      }
-    }).catch(function () {});
-  }
-  function startProgress() { if (!progressTimer) { progressTimer = setInterval(pullProgress, 1000); pullProgress(); } }
-  pullProgress();  // a collection may already be running (daily timer, or started from another tab)
-
-  btn.addEventListener('click', function () {
-    btn.disabled = true;
-    fetch('/api/refresh', { method: 'POST' }).then(function (r) {
-      if (!r.ok) throw new Error();
-      waiting();
-    }).catch(function () { btn.disabled = false; sub.textContent = I18N.request_failed; });
-  });
-  {% if view.refreshing %}waiting();{% endif %}
-})();
-</script>
+<script>window.LXCW = {{ {'i18n': i18n, 'lastCheck': view.checked_raw, 'jobId': view.job.id if view.job else None,
+  'jobStatus': view.job.status if view.job else None, 'jobActive': view.job_active,
+  'refreshing': view.refreshing}|tojson }};</script>
+<script src="{{ url_for('static', filename='app.js', v=version) }}"></script>
 {% endif %}
 </body>
 </html>

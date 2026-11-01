@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -627,16 +628,19 @@ def stream_process(cmd, prefix, shipper, timeout, env=None):
     return (124 if timed_out else code), last, saw_error
 
 
-def upgrade_one(ctid, name, shipper):
-    """Upgrade the system packages of one LXC (plain upgrade, never dist-upgrade)."""
-    label = f"CT {ctid} {name}"
+def upgrade_step(ctid, shipper):
+    """Upgrade the system packages of one LXC (plain upgrade, never dist-upgrade); returns (ok, message, note)."""
     code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", UPGRADE_SCRIPT],
                                    f"[CT {ctid}] ", shipper, 1800)
     if code == 124:
-        finish(shipper, ctid, False, "timed out after 30 minutes")
-        return {"label": label, "ok": False, "message": "timed out after 30 minutes"}
-    finish(shipper, ctid, code == 0)
-    return {"label": label, "ok": code == 0, "message": last[:200]}
+        return False, "timed out after 30 minutes", "timed out after 30 minutes"
+    return code == 0, last[:200], ""
+
+
+def upgrade_one(ctid, name, shipper):
+    ok, message, note = upgrade_step(ctid, shipper)
+    finish(shipper, ctid, ok, note)
+    return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
 
 def upgrade_containers(ctids, config, shipper):
@@ -657,9 +661,32 @@ def upgrade_containers(ctids, config, shipper):
     return sorted(results, key=lambda r: r["label"])
 
 
+NO_UPDATE_COMMAND = "stopped, or no update command (container not created by a helper script)"
+
+
+def fetch_update_apps_script():
+    return cached_fetch(f"https://raw.githubusercontent.com/{SCRIPTS_REPO}/main/{UPDATE_APPS_PATH}", 3600)
+
+
+def apps_step(ctid, script, backup_storage, shipper):
+    """Run the official update script for one LXC; returns (ok, message, note).
+
+    The script makes the backup itself when `backup_storage` is given."""
+    env = {**os.environ, "TERM": "xterm", "var_container": str(ctid), "var_unattended": "yes",
+           "var_skip_confirm": "yes", "var_continue_on_error": "yes", "var_auto_reboot": "no",
+           "var_backup": "yes" if backup_storage else "no"}
+    if backup_storage:
+        env["var_backup_storage"] = backup_storage
+    code, last, saw_error = stream_process(["bash", "-c", script], f"[CT {ctid}] ", shipper, 3600, env)
+    if code == 124:
+        return False, "timed out after one hour", "timed out after one hour"
+    ok = code == 0 and not saw_error
+    return ok, (last if ok else (last or f"exit code {code}"))[:200], ""
+
+
 def update_apps(job, config, shipper):
     """Run the official "PVE LXC Apps Update" script without interaction, one instance per container."""
-    script = cached_fetch(f"https://raw.githubusercontent.com/{SCRIPTS_REPO}/main/{UPDATE_APPS_PATH}", 3600)
+    script = fetch_update_apps_script()
     if not script:
         return [{"label": "update-apps.sh", "ok": False, "message": "official script unavailable (network issue?)"}]
     storage = config.get("backup_storage")
@@ -672,31 +699,211 @@ def update_apps(job, config, shipper):
         if has_update:
             todo.append((ctid, running[ctid]))
         else:
-            results.append({"label": f"CT {ctid}", "ok": False,
-                            "message": "stopped, or no update command (container not created by a helper script)"})
+            results.append({"label": f"CT {ctid}", "ok": False, "message": NO_UPDATE_COMMAND})
             skipped.append(ctid)
     workers = int(config.get("app_update_workers", 2))
     backup_note = f", backing up to {storage} first" if job.get("backup") else ", no backup"
     shipper.write(f"Application update of {len(todo)} container(s) with the official script "
                   f"({workers} in parallel{backup_note})\n")
     for ctid in skipped:
-        finish(shipper, ctid, False, "stopped, or no update command (container not created by a helper script)")
+        finish(shipper, ctid, False, NO_UPDATE_COMMAND)
 
     def one(item):
         ctid, name = item
-        env = {**os.environ, "TERM": "xterm", "var_container": str(ctid), "var_unattended": "yes",
-               "var_skip_confirm": "yes", "var_continue_on_error": "yes", "var_auto_reboot": "no",
-               "var_backup": "yes" if job.get("backup") else "no"}
-        if job.get("backup"):
-            env["var_backup_storage"] = storage
-        code, last, saw_error = stream_process(["bash", "-c", script], f"[CT {ctid}] ", shipper, 3600, env)
-        label = f"CT {ctid} {name}"
-        if code == 124:
-            finish(shipper, ctid, False, "timed out after one hour")
-            return {"label": label, "ok": False, "message": "timed out after one hour"}
-        ok = code == 0 and not saw_error
-        finish(shipper, ctid, ok)
-        return {"label": label, "ok": ok, "message": (last if ok else (last or f"exit code {code}"))[:200]}
+        ok, message, note = apps_step(ctid, script, storage if job.get("backup") else None, shipper)
+        finish(shipper, ctid, ok, note)
+        return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results += list(pool.map(one, todo))
+    return sorted(results, key=lambda r: r["label"])
+
+
+# ---------------------------------------------------------------- Docker stacks
+
+# One line per running container: <compose project>|<working dir>|<compose files>|<name>|<image>. Docker Compose
+# records the first three as labels on every container it creates, which is how a stack is found again.
+DOCKER_INVENTORY_SCRIPT = (
+    "command -v docker >/dev/null 2>&1 || { echo NODOCKER; exit 0; }; "
+    "for id in $(docker ps -q); do docker inspect --format "
+    "'{{index .Config.Labels \"com.docker.compose.project\"}}|"
+    "{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}|"
+    "{{index .Config.Labels \"com.docker.compose.project.config_files\"}}|"
+    "{{.Name}}|{{.Config.Image}}' \"$id\"; done"
+)
+
+
+def parse_docker_inventory(text):
+    """Split the running containers of an LXC into Compose stacks and containers started another way.
+
+    Returns (stacks, unmanaged), or None when Docker is not installed."""
+    if text.strip() == "NODOCKER":
+        return None
+    stacks, unmanaged = {}, []
+    for line in text.splitlines():
+        parts = line.split("|", 4)
+        if len(parts) != 5:
+            continue
+        project, workdir, files, name, image = parts
+        name = name.lstrip("/")
+        if project and files:
+            stacks.setdefault((project, workdir, files), []).append(name)
+        else:
+            unmanaged.append(f"{name} ({image})")
+    return ([{"project": key[0], "workdir": key[1], "files": key[2], "containers": names}
+             for key, names in stacks.items()], unmanaged)
+
+
+def compose_script(stack):
+    """Shell script run inside the LXC: check the files, download the new images, recreate what changed."""
+    files = [f for f in stack["files"].split(",") if f]
+    options = f"--project-directory {shlex.quote(stack['workdir'])} -p {shlex.quote(stack['project'])} " + \
+              " ".join(f"-f {shlex.quote(f)}" for f in files)
+    checks = "".join(f"[ -f {shlex.quote(f)} ] || {{ echo 'compose file not found: '{shlex.quote(f)}; exit 3; }}\n"
+                     for f in files)
+    return ('if docker compose version >/dev/null 2>&1; then C="docker compose"; else C=docker-compose; fi\n'
+            f"{checks}$C {options} pull && $C {options} up -d\n")
+
+
+def backup_container(ctid, storage, shipper):
+    """vzdump of the whole container before touching it (the same command as the official update script)."""
+    shipper.write(f"[CT {ctid}] Backing up to {storage} before updating...\n")
+    code, _, _ = stream_process(["vzdump", str(ctid), "--compress", "zstd", "--storage", storage,
+                                 "--notes-template", "{{guestname}} - lxc-update-watch backup"],
+                                f"[CT {ctid}] ", shipper, 7200)
+    return code == 0
+
+
+def docker_step(ctid, job, shipper):
+    """docker compose pull, then up -d, for every Compose stack of one LXC, then remove the old images.
+
+    Returns (ok, message, note)."""
+    prefix = f"[CT {ctid}] "
+    inventory = parse_docker_inventory(pct_exec(ctid, DOCKER_INVENTORY_SCRIPT, timeout=60)[1])
+    if inventory is None:
+        return False, "Docker is not installed in this container", "Docker is not installed"
+    stacks, unmanaged = inventory
+    if unmanaged:
+        shipper.write(f"{prefix}Not managed by Docker Compose, update them by hand: {', '.join(unmanaged)}\n")
+    if not stacks:
+        return False, "no running Docker Compose stack found", "no running Docker Compose stack found"
+
+    failed = []
+    for stack in stacks:
+        shipper.write(f"{prefix}== stack {stack['project']} ({', '.join(stack['containers'])}) ==\n")
+        code, _, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", compose_script(stack)],
+                                    prefix, shipper, 3600)
+        if code != 0:
+            failed.append(stack["project"])
+            shipper.write(f"{prefix}stack {stack['project']} failed (exit code {code})\n")
+    if failed:
+        return False, f"failed: {', '.join(failed)}"[:200], "old images kept" if job.get("cleanup") else ""
+
+    summary = f"{len(stacks)} stack(s) updated"
+    if job.get("cleanup"):  # only dangling images: the ones the pull left without a name and nothing uses
+        code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "docker", "image", "prune", "-f"],
+                                       prefix, shipper, 900)
+        summary += f", {last}" if code == 0 and last else ", image cleanup failed" if code else ""
+    if unmanaged:
+        summary += f"; {len(unmanaged)} container(s) not managed by Compose"
+    return True, summary[:200], ""
+
+
+def update_docker_one(ctid, name, job, config, shipper):
+    """Back up if asked, then update the Docker stacks of one LXC."""
+    if job.get("backup") and not backup_container(ctid, config.get("backup_storage"), shipper):
+        ok, message, note = False, "backup failed: nothing was updated", "backup failed, nothing was updated"
+    else:
+        ok, message, note = docker_step(ctid, job, shipper)
+    finish(shipper, ctid, ok, note)
+    return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
+
+
+def update_docker(job, config, shipper):
+    """Update the Docker Compose stacks of the containers of a job, a few containers at a time."""
+    if job.get("backup") and not config.get("backup_storage"):
+        return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
+    running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
+    results, todo = [], []
+    for ctid in job["ctids"]:
+        if ctid in running:
+            todo.append((ctid, running[ctid]))
+        else:
+            results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
+    workers = int(config.get("docker_update_workers", 2))
+    notes = [f"{workers} in parallel", "backup first" if job.get("backup") else "no backup",
+             "old images removed afterwards" if job.get("cleanup") else "old images kept"]
+    shipper.write(f"Docker stack update of {len(todo)} container(s) ({', '.join(notes)})\n")
+    for ctid in [r for r in job["ctids"] if r not in running]:
+        finish(shipper, ctid, False, "container stopped or not found")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results += list(pool.map(lambda item: update_docker_one(*item, job, config, shipper), todo))
+    return sorted(results, key=lambda r: r["label"])
+
+
+# ---------------------------------------------------------------- several updates in one job
+
+CHAIN_ORDER = ("upgrade_os", "update_apps", "update_docker")  # base system first, then the application, then its images
+CHAIN_NAMES = {"upgrade_os": "system", "update_apps": "applications", "update_docker": "Docker stacks"}
+CHAIN_WORKERS = {"upgrade_os": ("upgrade_workers", 4), "update_apps": ("app_update_workers", 2),
+                 "update_docker": ("docker_update_workers", 2)}
+
+
+def update_chain(job, config, shipper):
+    """Run several updates in one job: containers in parallel, the steps of each container one after the other.
+
+    job["actions"] lists the steps and job["targets"] the containers of each. A container is backed up once, before
+    its first step, and stops at its first failed step; the other containers carry on."""
+    actions = [a for a in CHAIN_ORDER if a in job.get("actions", [])]
+    targets = {a: {int(c) for c in job.get("targets", {}).get(a, [])} for a in actions}
+    storage = config.get("backup_storage")
+    backup = bool(job.get("backup")) and any(a in ("update_apps", "update_docker") for a in actions)
+    if backup and not storage:
+        return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
+    script = fetch_update_apps_script() if "update_apps" in actions else None
+    running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
+    results, todo = [], []
+    for ctid in sorted(set().union(*targets.values())):
+        if ctid in running:
+            todo.append((ctid, running[ctid]))
+        else:
+            results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
+            finish(shipper, ctid, False, "container stopped or not found")
+    workers = max(1, min(int(config.get(CHAIN_WORKERS[a][0], CHAIN_WORKERS[a][1])) for a in actions))
+    shipper.write(f"Update of {len(todo)} container(s): {' then '.join(CHAIN_NAMES[a] for a in actions)} "
+                  f"({workers} in parallel, {'backup first' if backup else 'no backup'})\n")
+
+    def run_step(action, ctid):
+        if action == "upgrade_os":
+            return upgrade_step(ctid, shipper)
+        if action == "update_apps":
+            if not script:
+                return False, "official script unavailable (network issue?)", ""
+            if pct_exec(ctid, "test -f /usr/bin/update")[0] != 0:
+                return False, NO_UPDATE_COMMAND, NO_UPDATE_COMMAND
+            return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first step
+        return docker_step(ctid, job, shipper)
+
+    def one(item):
+        ctid, name = item
+        label, prefix, done = f"CT {ctid} {name}", f"[CT {ctid}] ", []
+        if backup and not backup_container(ctid, storage, shipper):
+            finish(shipper, ctid, False, "backup failed, nothing was updated")
+            return {"label": label, "ok": False, "message": "backup failed: nothing was updated"}
+        mine = [a for a in actions if ctid in targets[a]]
+        for index, action in enumerate(mine):
+            shipper.write(f"{prefix}== {CHAIN_NAMES[action]} ==\n")
+            ok, message, note = run_step(action, ctid)
+            done.append(f"{CHAIN_NAMES[action]}: {message or ('ok' if ok else 'failed')}")
+            if not ok:
+                later = [CHAIN_NAMES[a] for a in mine[index + 1:]]
+                if later:
+                    done.append(f"not run: {', '.join(later)}")
+                    shipper.write(f"{prefix}Stopped after the {CHAIN_NAMES[action]} failure, not run: {', '.join(later)}\n")
+                finish(shipper, ctid, False, note)
+                return {"label": label, "ok": False, "message": "; ".join(done)[:200]}
+        finish(shipper, ctid, True)
+        return {"label": label, "ok": True, "message": "; ".join(done)[:200]}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results += list(pool.map(one, todo))
@@ -769,6 +976,10 @@ def run_job(config, job):
             results = upgrade_containers(job["ctids"], config, shipper)
         elif job["action"] == "update_apps":
             results = update_apps(job, config, shipper)
+        elif job["action"] == "update_docker":
+            results = update_docker(job, config, shipper)
+        elif job["action"] == "update_chain":
+            results = update_chain(job, config, shipper)
         elif job["action"] == "update_pve_scripts":
             shipper.write("Refreshing the scripts downloaded in PVE Scripts Local…\n")
             results = update_pve_scripts(config)
