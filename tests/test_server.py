@@ -309,7 +309,7 @@ def test_pve_scripts_button_sits_under_check_now(web, token_headers, sample_repo
     page = web.get("/").get_data(as_text=True)
     assert page.index('id="refresh"') < page.index('id="act-pve"') < page.index('class="actions"')
     actions = page[page.index('class="actions"'):]
-    assert 'id="act-pve"' not in actions and 'id="act-os"' in actions and 'id="act-apps"' in actions
+    assert 'id="act-pve"' not in actions and 'id="act-picker"' in actions and 'id="act-run"' in actions
 
 
 # ---------------------------------------------------------------- actions need no password
@@ -327,7 +327,7 @@ def test_page_has_no_password_prompt(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
     assert "pw-dialog" not in page and "X-Admin-Password" not in page and "lxcw_pw" not in page
-    assert all(f'id="{button}"' in page for button in ("act-os", "act-apps", "act-pve")) and 'id="msg"' in page
+    assert all(f'id="{button}"' in page for button in ("act-picker", "act-run", "act-pve")) and 'id="msg"' in page
 
 
 def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
@@ -396,9 +396,79 @@ def test_docker_update_needs_something_to_update_and_a_storage_for_backups(web, 
 def test_page_offers_the_docker_update(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert 'id="act-docker"' in page and "Update Docker stacks (1)" in page and 'data-names="paperless"' in page
+    assert 'value="update_docker"' in page and "Update Docker stacks (1)" in page and 'data-names="paperless"' in page
     assert 'id="opt-cleanup"' in page and "Remove old Docker images after updating Docker stacks" in page
     web.post("/api/actions", json={"action": "update_docker", "backup": True})
     assert "Docker stack update (with backup)" in web.get("/").get_data(as_text=True)
     web.get("/?lang=fr")
     assert "Mettre à jour les piles Docker" in web.get("/").get_data(as_text=True)
+
+
+def update_select(web):
+    page = web.get("/").get_data(as_text=True)
+    start = page.index('id="act-picker"')
+    return page[start:page.index("</details>", start)]
+
+
+def test_update_drop_down_lists_the_three_actions_and_disables_empty_ones(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    select = update_select(web)
+    assert [f'value="{a}"' in select for a in ("upgrade_os", "update_apps", "update_docker")] == [True] * 3
+    assert select.count('type="checkbox"') == 3
+    sample_report["containers"] = [c for c in sample_report["containers"] if c.get("status") != "running"]
+    post_report(web, token_headers, sample_report)
+    assert update_select(web).count(" disabled>") == 3
+
+
+# ---------------------------------------------------------------- several updates in one request
+
+def test_several_actions_make_one_combined_job(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    response = web.post("/api/actions", json={"actions": ["update_docker", "upgrade_os"], "cleanup": True})
+    assert response.status_code == 202
+    job = response.get_json()
+    assert job["action"] == "update_chain" and job["actions"] == ["upgrade_os", "update_docker"]   # fixed order
+    assert job["targets"]["upgrade_os"] == [100, 102] and job["targets"]["update_docker"] == [101]
+    assert job["ctids"] == [100, 101, 102] and job["cleanup"] is True and job["backup"] is False
+    assert web.get("/api/refresh/pending", headers=token_headers).get_json()["pending"] is True
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]["id"] == job["id"]
+    page = web.get("/").get_data(as_text=True)
+    assert "Update: system, Docker stacks" in page
+    for ctid in (100, 101, 102):
+        assert f'data-ct="{ctid}"' in page
+
+
+def test_combined_job_with_backup_and_french_title(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"actions": ["update_apps", "update_docker"], "backup": True}).get_json()
+    assert job["backup"] is True
+    page = web.get("/", headers={"Accept-Language": "fr"}).get_data(as_text=True)
+    assert "Mise à jour : applications, piles Docker (avec sauvegarde)" in page
+
+
+def test_a_single_entry_in_the_list_stays_a_plain_job(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"actions": ["update_docker"]}).get_json()
+    assert job["action"] == "update_docker" and job["ctids"] == [101] and "targets" not in job
+
+
+def test_actions_with_nothing_to_update_are_dropped(web, token_headers, sample_report):
+    sample_report["containers"] = [ct for ct in sample_report["containers"] if ct["ctid"] != 101]
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"]}).get_json()
+    assert job["action"] == "upgrade_os" and job["ctids"] == [100, 102]
+
+
+def test_invalid_lists_of_actions_are_refused(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    for actions in ([], ["nope"], ["upgrade_os", "upgrade_os"], ["update_pve_scripts", "upgrade_os"], [["upgrade_os"]], "upgrade_os"):
+        response = web.post("/api/actions", json={"actions": actions})
+        assert response.status_code == 400, actions
+    assert web.get("/api/status").get_json()["job"] is None
+
+
+def test_page_lets_you_tick_several_updates(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert 'id="act-picker"' in page and "Choose updates" in page and 'id="act-run"' in page
+    assert "actions: action" in page and "Run these updates?" in page

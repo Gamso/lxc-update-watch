@@ -7,8 +7,8 @@ and can apply them from the page, with a live console and an optional backup fir
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
-- Action buttons: system update (parallel), application update with the official
-  *PVE LXC Apps Update* script (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
+- Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
+  several in one go (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
   images are being checked, with a progress bar.
@@ -152,9 +152,10 @@ Only needed for what the automatic detection does not cover.
 | `pve_script` / `pve_repo` | Optional; read the version a helper script pins instead of using the latest release. |
 | `update_cmd` | Optional; command shown on the page to update the application. |
 
-## Action buttons
+## Updates
 
-A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
+The *Choose updates* menu (top left of the page) lists the three updates below with the number of containers
+concerned; tick one or several, then press *Run*. A click records a request on the service; the host's timer picks it up within a minute, runs it and streams the
 output to the page's console, with one tab per container (waiting, running, ok or failed) and a color per
 container in the *All* view. There is no password: anyone who can open the page can start them (see the security
 notes below).
@@ -175,6 +176,11 @@ notes below).
   then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
   and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
   applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
+- **Several at once.** The ticked updates form one job. The containers run in parallel (as many as the smallest of
+  the workers settings of the ticked updates), but each container goes through the steps one after the other, always
+  in this order: system, applications, Docker stacks. With the backup option, a container is backed up once, before its
+  first step. A container stops at its first failed step (the rest is shown as not run in its console tab); the other
+  containers carry on.
 - **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
   (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
 

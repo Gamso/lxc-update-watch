@@ -20,6 +20,8 @@ STRINGS = {
         "btn_upgrade_os": "Update system ({n})",
         "btn_update_apps": "Update applications ({n})",
         "btn_update_docker": "Update Docker stacks ({n})",
+        "update_choose": "Choose updates…",
+        "update_run": "Run",
         "btn_pve_scripts": "Refresh PVE scripts",
         "options": "Options",
         "opt_language": "Language",
@@ -39,6 +41,11 @@ STRINGS = {
         "job_update_docker": "Docker stack update",
         "job_update_docker_backup": "Docker stack update (with backup)",
         "job_update_pve_scripts": "PVE scripts refresh",
+        "job_update_chain": "Update: {steps}",
+        "job_update_chain_backup": "Update: {steps} (with backup)",
+        "chain_upgrade_os": "system",
+        "chain_update_apps": "applications",
+        "chain_update_docker": "Docker stacks",
         "job_pending": "waiting for the collector (up to a minute)",
         "job_running": "running…",
         "job_done_ok": "finished",
@@ -86,6 +93,10 @@ STRINGS = {
         "js_confirm_pve": "Refresh all scripts downloaded in PVE Scripts Local?\nThis can take several minutes.",
         "js_backup_yes": "A backup (vzdump) will be made before each update.",
         "js_backup_no": "No backup will be made.",
+        "js_backup_once": "Each container is backed up once (vzdump) before its first step.",
+        "js_confirm_chain": "Run these updates? Each container goes through them one after the other (system, "
+                            "applications, Docker stacks) and stops at its first failure.\n\n{details}\n\n"
+                            "{backup}\n{cleanup}Affected services will restart.",
         "js_cleanup_yes": "The old Docker images will be removed afterwards.",
         "js_cleanup_no": "The old Docker images will be kept.",
         "js_confirm_docker": "Update the Docker stacks of these containers (docker compose pull, then up -d)?\n\n{names}\n\n"
@@ -118,6 +129,8 @@ STRINGS = {
         "btn_upgrade_os": "Mettre à jour le système ({n})",
         "btn_update_apps": "Mettre à jour les applications ({n})",
         "btn_update_docker": "Mettre à jour les piles Docker ({n})",
+        "update_choose": "Choisir les mises à jour…",
+        "update_run": "Lancer",
         "btn_pve_scripts": "Actualiser les scripts PVE",
         "options": "Options",
         "opt_language": "Langue",
@@ -137,6 +150,11 @@ STRINGS = {
         "job_update_docker": "Mise à jour des piles Docker",
         "job_update_docker_backup": "Mise à jour des piles Docker (avec sauvegarde)",
         "job_update_pve_scripts": "Actualisation des scripts PVE",
+        "job_update_chain": "Mise à jour : {steps}",
+        "job_update_chain_backup": "Mise à jour : {steps} (avec sauvegarde)",
+        "chain_upgrade_os": "système",
+        "chain_update_apps": "applications",
+        "chain_update_docker": "piles Docker",
         "job_pending": "en attente du collecteur (une minute au plus)",
         "job_running": "en cours…",
         "job_done_ok": "terminée",
@@ -186,6 +204,10 @@ STRINGS = {
                           "Cela peut durer plusieurs minutes.",
         "js_backup_yes": "Une sauvegarde (vzdump) sera faite avant chaque mise à jour.",
         "js_backup_no": "Aucune sauvegarde ne sera faite.",
+        "js_backup_once": "Chaque conteneur est sauvegardé une fois (vzdump) avant sa première étape.",
+        "js_confirm_chain": "Lancer ces mises à jour ? Chaque conteneur les enchaîne l'une après l'autre (système, "
+                            "applications, piles Docker) et s'arrête à son premier échec.\n\n{details}\n\n"
+                            "{backup}\n{cleanup}Les services concernés seront redémarrés.",
         "js_cleanup_yes": "Les anciennes images Docker seront supprimées ensuite.",
         "js_cleanup_no": "Les anciennes images Docker seront conservées.",
         "js_confirm_docker": "Mettre à jour les piles Docker de ces conteneurs (docker compose pull, puis up -d) ?\n\n{names}\n\n"
@@ -209,7 +231,7 @@ STRINGS = {
 
 # Strings handed to the browser for the page's JavaScript.
 JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "js_confirm_os", "js_confirm_apps",
-           "js_confirm_pve", "js_backup_yes", "js_backup_no", "js_cleanup_yes", "js_cleanup_no", "js_confirm_docker",
+           "js_confirm_pve", "js_backup_yes", "js_backup_no", "js_cleanup_yes", "js_cleanup_no", "js_confirm_docker", "js_backup_once", "js_confirm_chain",
            "step_queued", "step_system", "step_app", "step_docker", "live_progress")
 
 

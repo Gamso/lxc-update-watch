@@ -26,6 +26,15 @@ h1{font-size:22px;font-weight:500;margin:0}
 .sub{color:var(--muted);font-size:13px;margin:0}
 footer{margin-top:28px;text-align:center}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-8px 0 16px}
+.picker{position:relative}
+.picker summary{list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:260px;max-width:100%;box-sizing:border-box;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+.picker summary::-webkit-details-marker{display:none}
+.picker summary::after{content:"\25BE";color:var(--muted)}
+.picker summary:hover{border-color:var(--muted)}
+.picker .menu{position:absolute;z-index:5;top:calc(100% + 4px);left:0;min-width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.picker label{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;font-size:13px;white-space:nowrap;cursor:pointer}
+.picker label:hover{background:var(--bg)}.picker label.off{color:var(--muted);cursor:default}
+.picker[inert]{opacity:.55}
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(340px,90vw)}
 dialog::backdrop{background:rgba(0,0,0,.5)}
 dialog label{display:block;font-size:14px;margin-bottom:8px}
@@ -124,14 +133,20 @@ summary.line::-webkit-details-marker{display:none}
 <p class="sub" id="msg" aria-live="polite"></p>
 <div id="progress" hidden><div class="track"><div class="fill"></div></div><p class="sub" id="progress-text" aria-live="polite"></p></div>
 <div class="actions">
-<button id="act-os" type="button" data-names="{{ view.upgradable|map(attribute='name')|join(', ') }}"{% if not view.upgradable or view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_os', n=view.upgradable|length) }}</button>
-<button id="act-apps" type="button" data-names="{{ view.app_updatable|map(attribute='name')|join(', ') }}"{% if not view.app_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_apps', n=view.app_updatable|length) }}</button>
-<button id="act-docker" type="button" data-names="{{ view.docker_updatable|map(attribute='name')|join(', ') }}"{% if not view.docker_updatable or view.job_active %} disabled{% endif %}>{{ t('btn_update_docker', n=view.docker_updatable|length) }}</button>
+<details id="act-picker" class="picker"{% if view.job_active %} inert{% endif %}>
+<summary id="act-summary">{{ t('update_choose') }}</summary>
+<div class="menu">
+{% for action, key, label, items in [('upgrade_os', 'btn_upgrade_os', 'chain_upgrade_os', view.upgradable), ('update_apps', 'btn_update_apps', 'chain_update_apps', view.app_updatable), ('update_docker', 'btn_update_docker', 'chain_update_docker', view.docker_updatable)] %}
+<label{% if not items %} class="off"{% endif %}><input type="checkbox" value="{{ action }}" data-label="{{ t(label) }}" data-names="{{ items|map(attribute='name')|join(', ') }}"{% if not items %} disabled{% endif %}> {{ t(key, n=items|length) }}</label>
+{% endfor %}
+</div>
+</details>
+<button id="act-run" type="button" disabled>{{ t('update_run') }}</button>
 </div>
 {% if view.job %}
 {% set j = view.job %}
 <div class="job">
-<p><strong>{{ t('job_' ~ j.action ~ ('_backup' if j.backup else '')) }}</strong> ·
+<p><strong>{{ view.job_title }}</strong> ·
 {% if j.status == 'pending' %}{{ t('job_pending') }}
 {% elif j.status == 'running' %}{{ t('job_running') }}
 {% elif j.ok %}{{ t('job_done_ok') }}
@@ -220,7 +235,7 @@ summary.line::-webkit-details-marker{display:none}
     fetch('/api/actions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ action: action }, extra || {}))
+      body: JSON.stringify(Object.assign(Array.isArray(action) ? { actions: action } : { action: action }, extra || {}))
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (!r.ok) throw new Error((body.code && I18N.api_err[body.code]) || body.error || I18N.request_refused);
@@ -229,38 +244,68 @@ summary.line::-webkit-details-marker{display:none}
     }).catch(function (e) { msg.textContent = e.message; });
   }
 
-  var os = document.getElementById('act-os'), pve = document.getElementById('act-pve');
-  if (os) os.addEventListener('click', function () {
-    act('upgrade_os', fmt(I18N.js_confirm_os, { names: os.dataset.names }));
-  });
+  var pve = document.getElementById('act-pve');
   if (pve) pve.addEventListener('click', function () { act('update_pve_scripts', I18N.js_confirm_pve); });
-  var apps = document.getElementById('act-apps'), backup = document.getElementById('opt-backup');
+  var backup = document.getElementById('opt-backup');
   if (backup) {  // the choice is remembered by this browser
     try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
     backup.addEventListener('change', function () {
       try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
     });
   }
-  var cleanup = document.getElementById('opt-cleanup'), docker = document.getElementById('act-docker');
+  var cleanup = document.getElementById('opt-cleanup');
   if (cleanup) {
     try { var savedCleanup = localStorage.getItem('lxcw_cleanup'); if (savedCleanup !== null) cleanup.checked = savedCleanup === '1'; } catch (e) {}
     cleanup.addEventListener('change', function () {
       try { localStorage.setItem('lxcw_cleanup', cleanup.checked ? '1' : '0'); } catch (e) {}
     });
   }
-  if (apps) apps.addEventListener('click', function () {
-    var withBackup = !!(backup && backup.checked);
-    act('update_apps', fmt(I18N.js_confirm_apps, { names: apps.dataset.names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
-      { backup: withBackup });
-  });
-  if (docker) docker.addEventListener('click', function () {
-    var withBackup = !!(backup && backup.checked), withCleanup = !!(cleanup && cleanup.checked);
-    act('update_docker', fmt(I18N.js_confirm_docker, {
-      names: docker.dataset.names,
-      backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no,
-      cleanup: withCleanup ? I18N.js_cleanup_yes : I18N.js_cleanup_no
-    }), { backup: withBackup, cleanup: withCleanup });
-  });
+  var runners = {
+    upgrade_os: function (names) {
+      act('upgrade_os', fmt(I18N.js_confirm_os, { names: names }));
+    },
+    update_apps: function (names) {
+      var withBackup = !!(backup && backup.checked);
+      act('update_apps', fmt(I18N.js_confirm_apps, { names: names, backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no }),
+        { backup: withBackup });
+    },
+    update_docker: function (names) {
+      var withBackup = !!(backup && backup.checked), withCleanup = !!(cleanup && cleanup.checked);
+      act('update_docker', fmt(I18N.js_confirm_docker, {
+        names: names,
+        backup: withBackup ? I18N.js_backup_yes : I18N.js_backup_no,
+        cleanup: withCleanup ? I18N.js_cleanup_yes : I18N.js_cleanup_no
+      }), { backup: withBackup, cleanup: withCleanup });
+    }
+  };
+  var picker = document.getElementById('act-picker'), run = document.getElementById('act-run');
+  if (picker && run) {
+    var boxes = [].slice.call(picker.querySelectorAll('input[type=checkbox]')), summary = document.getElementById('act-summary');
+    var placeholder = summary.textContent;
+    var chosen = function () { return boxes.filter(function (b) { return b.checked && !b.disabled; }); };
+    var refreshPicker = function () {
+      var list = chosen();
+      summary.textContent = list.length ? list.map(function (b) { return b.dataset.label; }).join(', ') : placeholder;
+      run.disabled = !list.length;
+    };
+    boxes.forEach(function (b) { b.addEventListener('change', refreshPicker); });
+    document.addEventListener('click', function (e) { if (!picker.contains(e.target)) picker.open = false; });
+    run.addEventListener('click', function () {
+      var list = chosen();
+      if (!list.length) return;
+      picker.open = false;
+      if (list.length === 1) { runners[list[0].value](list[0].dataset.names); return; }
+      var values = list.map(function (b) { return b.value; });
+      var withBackup = !!(backup && backup.checked) && values.some(function (v) { return v !== 'upgrade_os'; });
+      var withCleanup = !!(cleanup && cleanup.checked) && values.indexOf('update_docker') >= 0;
+      act(values, fmt(I18N.js_confirm_chain, {
+        details: list.map(function (b) { return '• ' + b.dataset.label + ': ' + b.dataset.names; }).join('\n'),
+        backup: withBackup ? I18N.js_backup_once : I18N.js_backup_no,
+        cleanup: values.indexOf('update_docker') >= 0 ? (withCleanup ? I18N.js_cleanup_yes : I18N.js_cleanup_no) + '\n' : ''
+      }), { backup: withBackup, cleanup: withCleanup });
+    });
+    refreshPicker();
+  }
 
   // Live console: the collector streams the job output to the service and the page polls it. A line starting with
   // "[CT n]" belongs to container n: the tabs filter by container and show where each container stands.

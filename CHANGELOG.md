@@ -14,7 +14,13 @@ All notable changes to this project are documented here. The format follows
   containers that have an image to update (found through the labels Compose puts on its containers), with an optional
   backup first and an option, on by default, to remove the old images afterwards (`docker image prune -f` only, and
   only when every stack succeeded). Containers not started by Compose are listed as to update by hand.
+- Several updates in one go: tick any of system, applications and Docker stacks. They run as one job, in that order
+  for each container (containers in parallel); a container is backed up once and stops at its first failed step.
 - Options: *Back up before updating applications and Docker stacks* and *Remove old Docker images* (on by default).
+
+### Changed
+- The three update buttons (system, applications, Docker stacks) are replaced by a menu with check boxes and a *Run*
+  button; an entry with nothing to update is greyed out.
 
 ## [0.2.0] - 2026-10-31
 
