@@ -19,9 +19,9 @@ LOG_FILE = STATE_FILE.with_name("job.log")
 PROGRESS_FILE = STATE_FILE.with_name("progress.json")
 COLLECTOR_FILE = STATE_FILE.with_name("collector.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
-JOB_ACTIONS = {"upgrade_os", "update_pve_scripts", "update_apps", "update_docker"}
-# Actions that change the containers: a full check of them follows, and a backup can be taken first.
+# The updates the page can start: a full check of the containers follows, and a backup can be taken first.
 CONTAINER_ACTIONS = ("upgrade_os", "update_apps", "update_docker")
+JOB_ACTIONS = set(CONTAINER_ACTIONS)
 BACKUP_ACTIONS = ("update_apps", "update_docker")
 LOG_MAX_BYTES = 1_000_000
 PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
@@ -505,32 +505,32 @@ def api_actions():
     # cross-site form cannot send (and a cross-site fetch would need a CORS preflight this service never answers).
     body = request.get_json(silent=True) or {}
     asked = body["actions"] if isinstance(body.get("actions"), list) else [body.get("action")]
-    actions = [a for a in CONTAINER_ACTIONS + ("update_pve_scripts",) if a in asked]  # fixed order, no duplicates
-    if not all(isinstance(a, str) for a in asked) or not actions or len(asked) != len(set(asked)) or any(a not in JOB_ACTIONS for a in asked) or             ("update_pve_scripts" in actions and len(actions) > 1):
+    actions = [a for a in CONTAINER_ACTIONS if a in asked]  # fixed order, no duplicates
+    if not all(isinstance(a, str) for a in asked) or not actions or len(asked) != len(set(asked)) \
+            or any(a not in JOB_ACTIONS for a in asked):
         api_error(400, "unknown_action", "unknown action")
     state = load_state()
     if not state:
         api_error(400, "no_report", "no report received yet")
     if job_is_active(load_job()):
         api_error(409, "job_running", "a job is already running")
-    targets = {a: [ct["ctid"] for ct in CONTAINER_LISTS[a](state)] for a in actions if a in CONTAINER_LISTS}
+    targets = {a: [ct["ctid"] for ct in CONTAINER_LISTS[a](state)] for a in actions}
     targets = {a: ctids for a, ctids in targets.items() if ctids}
-    if actions != ["update_pve_scripts"] and not targets:
+    if not targets:
         api_error(400, "no_containers", "no container to update")
-    actions = [a for a in actions if a in targets] or actions
+    actions = [a for a in actions if a in targets]
     backup = bool(body.get("backup")) and any(a in BACKUP_ACTIONS for a in actions)
     cleanup = bool(body.get("cleanup")) and "update_docker" in actions   # remove the old images afterwards
     if backup and not state.get("backup_storage"):
         api_error(400, "backup_not_configured", "backup_storage is not set in the collector config")
-    job = {"id": uuid.uuid4().hex, "action": actions[0], "ctids": targets.get(actions[0], []), "status": "pending",
+    job = {"id": uuid.uuid4().hex, "action": actions[0], "ctids": targets[actions[0]], "status": "pending",
            "backup": backup, "cleanup": cleanup, "requested_at": now_iso(), "results": []}
     if len(actions) > 1:  # several updates: each container runs its steps one after the other
         job.update(action="update_chain", actions=actions, targets=targets,
                    ctids=sorted({ctid for ctids in targets.values() for ctid in ctids}))
     LOG_FILE.unlink(missing_ok=True)
     write_json(JOB_FILE, job)
-    if actions[0] in CONTAINER_ACTIONS:
-        request_refresh()  # the list must be checked again once the updates are installed
+    request_refresh()  # the list must be checked again once the updates are installed
     return jsonify(job), 202
 
 

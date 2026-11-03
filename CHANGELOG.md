@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- The *Refresh PVE scripts* button, its `update_pve_scripts` action and everything that supported it: the
+  `pve_scripts_local` setting, `lxc_collect.py --probe-pve-scripts` and `deploy.ps1 -Action probe-pve` (the menu of
+  `deploy.ps1` is renumbered). It only refreshed the scripts of PVE Scripts Local, which the application updates of
+  this project never use: they read the helper scripts straight from GitHub.
+
 ## [0.3.1] - 2026-11-01
 
 ### Fixed

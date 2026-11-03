@@ -13,7 +13,6 @@
     config     create or check /etc/lxc-update-watch.json (token, address, missing keys)
     dry-run    collect without sending anything and print a summary
     run-now    collect and send the report to the page
-    probe-pve  list the scripts PVE Scripts Local would refresh (changes nothing)
     status     services, timers, web page, versions and deployed files
     logs       latest collector logs
     update     redeploy only what differs from your local copy
@@ -26,7 +25,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('menu', 'ssh-key', 'collector', 'service', 'config', 'dry-run', 'run-now',
-                 'probe-pve', 'status', 'logs', 'update', 'full')]
+                 'status', 'logs', 'update', 'full')]
     [string]$Action = 'menu',
     [string]$ProxmoxHost,
     [string]$User,
@@ -321,8 +320,6 @@ for key, default in (("upgrade_workers", 4),):
         cfg[key] = default
         print("Key added: %s = %s" % (key, default))
         changed = True
-if "pve_scripts_local" not in cfg:
-    print("To do: add \"pve_scripts_local\": {\"url\": \"http://CT-IP:3000\"} for the PVE scripts button.")
 if changed:
     if not created:
         shutil.copy2(path, "%s.bak-%s" % (path, time.strftime("%Y%m%d%H%M%S")))
@@ -487,11 +484,6 @@ function Step-RunNow {
     Invoke-Remote 'python3 /opt/lxc-update-watch/collector/lxc_collect.py' | Out-Null
 }
 
-function Step-ProbePve {
-    Write-Title 'PVE Scripts Local scripts (read only)'
-    Invoke-Remote 'python3 /opt/lxc-update-watch/collector/lxc_collect.py --probe-pve-scripts' -AllowFail | Out-Null
-}
-
 function Get-Drift {
     $lines = Invoke-Remote (Get-HashScript) -Quiet
     $remote = @{}
@@ -571,10 +563,9 @@ function Show-Menu {
         '5'  = @('Configuration (token, address)', { Step-Config })
         '6'  = @('Dry run', { Step-DryRun })
         '7'  = @('Collect and send now', { Step-RunNow })
-        '8'  = @('Test PVE Scripts Local scripts', { Step-ProbePve })
-        '9'  = @('Status and deployed files', { Step-Status | Out-Null })
-        '10' = @('Collector logs', { Step-Logs })
-        '11' = @('Update what changed', { Step-Update })
+        '8'  = @('Status and deployed files', { Step-Status | Out-Null })
+        '9'  = @('Collector logs', { Step-Logs })
+        '10' = @('Update what changed', { Step-Update })
         'q'  = @('Quit', $null)
     }
     while ($true) {
@@ -600,7 +591,6 @@ function Main {
         'config'    { Step-Config }
         'dry-run'   { Step-DryRun }
         'run-now'   { Step-RunNow }
-        'probe-pve' { Step-ProbePve }
         'status'    { Step-Status | Out-Null }
         'logs'      { Step-Logs }
         'update'    { Step-Update }

@@ -205,9 +205,6 @@ def test_a_check_request_runs_a_collection(monkeypatch):
     assert c.handle_requests({}) is True and ran == []
 
 
-def test_refreshing_the_pve_scripts_does_not_trigger_a_check(monkeypatch):
-    ran = pending_state(monkeypatch, {"refresh": False, "job": {"action": "update_pve_scripts"}})
-    assert c.handle_requests({}) is False and ran == ["update_pve_scripts"]
 
 
 def test_updates_are_followed_by_a_check(monkeypatch):

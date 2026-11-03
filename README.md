@@ -8,7 +8,7 @@ and can apply them from the page, with a live console and an optional backup fir
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
 - Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
-  several in one go (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
+  several in one go (optional `vzdump` backup first).
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
   images are being checked, with a progress bar.
@@ -64,7 +64,7 @@ If PowerShell refuses to run the script: `powershell -ExecutionPolicy Bypass -Fi
 - Replaced files are backed up on Proxmox (`.bak-YYYYMMDDHHMMSS`, three kept). Your
   `/etc/lxc-update-watch.json` is never overwritten: only the token (aligned with the service's) and missing keys
   are added, with a backup.
-- Other actions: `collector`, `service`, `config`, `run-now`, `probe-pve`, `logs`.
+- Other actions: `collector`, `service`, `config`, `run-now`, `logs`.
 
 ### By hand
 
@@ -102,7 +102,6 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `auto_apps` | `true` by default. `false` disables the automatic helper-script detection. |
 | `apps` | Manual entries, keyed by CTID. They take precedence over the automatic detection (see below). |
 | `backup_storage` | Proxmox storage for the *Back up before updating applications* option (`pvesm status --content backup` lists them). Without it the option is unavailable. |
-| `pve_scripts_local` | `{"url": "http://<ct-ip>:3000"}`, needed for the *Refresh PVE scripts* button. |
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
 | `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
@@ -181,9 +180,6 @@ notes below).
   in this order: system, applications, Docker stacks. With the backup option, a container is backed up once, before its
   first step. A container stops at its first failed step (the rest is shown as not run in its console tab); the other
   containers carry on.
-- **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
-  (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
-
 Security notes: **by default the page has no login**. Anyone who can open it can read the state and the console
 output, and can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the
 host through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and

@@ -139,7 +139,7 @@ def test_backup_needs_a_configured_storage(web, token_headers, sample_report):
 def test_only_one_job_at_a_time(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     assert web.post("/api/actions", json={"action": "upgrade_os"}).status_code == 202
-    again = web.post("/api/actions", json={"action": "update_pve_scripts"})
+    again = web.post("/api/actions", json={"action": "update_apps"})
     assert again.status_code == 409 and again.get_json()["code"] == "job_running"
 
 
@@ -165,7 +165,7 @@ def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     page = web.get("/").get_data(as_text=True)
     assert "Application update (with backup)" in page and "finished with errors" in page and "boom" in page
     assert web.get("/api/status").get_json()["job"] == "done"
-    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
 
 
 def test_log_is_capped(web, token_headers, sample_report, monkeypatch):
@@ -304,19 +304,18 @@ def test_options_menu_is_available_before_the_first_report(web):
     assert 'id="options-dialog"' in page and '<select id="lang-select"' in page
 
 
-def test_pve_scripts_button_sits_under_check_now(web, token_headers, sample_report):
+def test_page_has_no_pve_scripts_button_any_more(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert page.index('id="refresh"') < page.index('id="act-pve"') < page.index('class="actions"')
-    actions = page[page.index('class="actions"'):]
-    assert 'id="act-pve"' not in actions and 'id="act-picker"' in actions and 'id="act-run"' in actions
+    assert page.index('id="refresh"') < page.index('class="actions"') and 'id="act-pve"' not in page
+    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 400
 
 
 # ---------------------------------------------------------------- actions need no password
 
 def test_actions_run_without_any_password(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    for action, expected in (("update_pve_scripts", []), ("upgrade_os", [100, 102])):
+    for action, expected in (("update_docker", [101]), ("upgrade_os", [100, 102])):
         response = web.post("/api/actions", json={"action": action})
         assert response.status_code == 202 and response.get_json()["ctids"] == expected
         pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
@@ -327,7 +326,7 @@ def test_page_has_no_password_prompt(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
     assert "pw-dialog" not in page and "X-Admin-Password" not in page and "lxcw_pw" not in page
-    assert all(f'id="{button}"' in page for button in ("act-picker", "act-run", "act-pve")) and 'id="msg"' in page
+    assert all(f'id="{button}"' in page for button in ("act-picker", "act-run")) and 'id="msg"' in page
 
 
 def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
@@ -338,13 +337,6 @@ def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
 
 
 
-def test_only_updates_of_the_containers_ask_for_a_check(web, token_headers, sample_report):
-    post_report(web, token_headers, sample_report)
-    job = web.post("/api/actions", json={"action": "update_pve_scripts"}).get_json()
-    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is False
-    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
-    web.post("/api/actions", json={"action": "upgrade_os"})
-    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
 
 
 # ---------------------------------------------------------------- console tabs
@@ -359,11 +351,6 @@ def test_console_has_one_tab_per_container_of_the_job(web, token_headers, sample
     assert ">Tous</button>" in web.get("/").get_data(as_text=True)
 
 
-def test_console_has_no_tabs_for_a_job_without_containers(web, token_headers, sample_report):
-    post_report(web, token_headers, sample_report)
-    web.post("/api/actions", json={"action": "update_pve_scripts"})
-    page = web.get("/").get_data(as_text=True)
-    assert 'id="console"' in page and 'id="console-tabs"' not in page
 
 
 # ---------------------------------------------------------------- Docker stack updates
@@ -461,7 +448,7 @@ def test_actions_with_nothing_to_update_are_dropped(web, token_headers, sample_r
 
 def test_invalid_lists_of_actions_are_refused(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    for actions in ([], ["nope"], ["upgrade_os", "upgrade_os"], ["update_pve_scripts", "upgrade_os"], [["upgrade_os"]], "upgrade_os"):
+    for actions in ([], ["nope"], ["upgrade_os", "upgrade_os"], ["update_pve_scripts"], [["upgrade_os"]], "upgrade_os"):
         response = web.post("/api/actions", json={"actions": actions})
         assert response.status_code == 400, actions
     assert web.get("/api/status").get_json()["job"] is None

@@ -910,53 +910,6 @@ def update_chain(job, config, shipper):
     return sorted(results, key=lambda r: r["label"])
 
 
-def normalize_id(text):
-    return re.sub(r"[^a-z0-9]+", "-", re.sub(r"\.(sh|bash|py|js|ts)$", "", (text or "").lower())).strip("-")
-
-
-def trpc(base, procedure, payload=None, timeout=60):
-    """Call a tRPC procedure of PVE Scripts Local (SuperJSON transformer): GET without input, POST with {"json": input}."""
-    url = f"{base.rstrip('/')}/api/trpc/{procedure}"
-    if payload is None:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    else:
-        req = urllib.request.Request(url, data=json.dumps({"json": payload}).encode(), method="POST",
-                                     headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)["result"]["data"]["json"]
-
-
-def downloaded_pve_slugs(base):
-    """Same selection as "Update all downloaded scripts": cards whose script is present locally."""
-    local = trpc(base, "scripts.getAllDownloadedScripts")["scripts"]
-    cards = trpc(base, "scripts.getScriptCardsWithCategories")["cards"]
-    slugs = []
-    for card in cards:
-        card_slug = (card.get("slug") or "").lower()
-        basenames = {normalize_id(b) for b in card.get("install_basenames") or []}
-        if any((s.get("slug") or "").lower() == card_slug or normalize_id(s.get("name")) in basenames
-               for s in local if s.get("name")):
-            slugs.append(card["slug"])
-    return slugs
-
-
-def update_pve_scripts(config):
-    base = (config.get("pve_scripts_local") or {}).get("url")
-    if not base:
-        return [{"label": "PVE Scripts Local", "ok": False, "message": "pve_scripts_local.url is not set in the config"}]
-    try:
-        slugs = downloaded_pve_slugs(base)
-        if not slugs:
-            return [{"label": "PVE Scripts Local", "ok": False, "message": "no downloaded script found"}]
-        data = trpc(base, "scripts.loadMultipleScripts", {"slugs": slugs}, timeout=1800)
-    except (urllib.error.URLError, KeyError, ValueError, TimeoutError) as e:
-        return [{"label": "PVE Scripts Local", "ok": False, "message": f"API unreachable or unexpected: {e}"}]
-    results = [{"label": "PVE Scripts Local", "ok": bool(data.get("success")) and not data.get("failed"),
-                "message": data.get("message") or data.get("error") or ""}]
-    results += [{"label": f["slug"], "ok": False, "message": f["error"][:200]} for f in (data.get("failed") or [])[:10]]
-    return results
-
-
 def server_call(config, method, path, body=None, timeout=15):
     req = urllib.request.Request(
         config["server_url"].rstrip("/") + path,
@@ -981,9 +934,6 @@ def run_job(config, job):
             results = update_docker(job, config, shipper)
         elif job["action"] == "update_chain":
             results = update_chain(job, config, shipper)
-        elif job["action"] == "update_pve_scripts":
-            shipper.write("Refreshing the scripts downloaded in PVE Scripts Local…\n")
-            results = update_pve_scripts(config)
         else:
             results = [{"label": job["action"], "ok": False, "message": "unknown action"}]
     except Exception as e:  # the job must always finish on the service side
@@ -999,8 +949,8 @@ def run_job(config, job):
 def handle_requests(config):
     """Run the job requested from the web page, if any. Returns True when a full check must follow.
 
-    The service asks for that check itself (a refresh request) when the job changes the containers, i.e. after a
-    system or application update; refreshing the PVE scripts leaves them untouched, so no check follows it."""
+    The service asks for that check itself (a refresh request) when it records an update, so that the page shows
+    the new state."""
     try:
         pending = server_call(config, "GET", "/api/jobs/pending", timeout=10)
     except (OSError, ValueError):  # unreachable service, dropped connection, reply that is not JSON
@@ -1016,8 +966,6 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="print the JSON report without sending it")
     parser.add_argument("--if-requested", action="store_true",
                         help="only act if the web page requested a check or an action")
-    parser.add_argument("--probe-pve-scripts", action="store_true",
-                        help="list the scripts that \"Update all downloaded scripts\" would refresh, changing nothing")
     args = parser.parse_args()
 
     if run(["which", "pct"])[0] != 0:
@@ -1029,14 +977,6 @@ def main():
         config = {}
         if not args.dry_run:
             sys.exit(f"Config file not found: {CONFIG_PATH}")
-
-    if args.probe_pve_scripts:
-        base = (config.get("pve_scripts_local") or {}).get("url")
-        if not base:
-            sys.exit("pve_scripts_local.url is not set in the config.")
-        slugs = downloaded_pve_slugs(base)
-        print(f"{len(slugs)} script(s) would be refreshed:", ", ".join(sorted(slugs)))
-        return
 
     if args.if_requested and not handle_requests(config):
         return

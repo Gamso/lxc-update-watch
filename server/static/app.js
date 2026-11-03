@@ -37,8 +37,6 @@
     }).catch(function (e) { msg.textContent = e.message; });
   }
 
-  var pve = document.getElementById('act-pve');
-  if (pve) pve.addEventListener('click', function () { act('update_pve_scripts'); });
   var backup = document.getElementById('opt-backup');
   if (backup) {  // the choice is remembered by this browser
     try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
