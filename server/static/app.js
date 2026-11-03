@@ -44,6 +44,13 @@
       try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
     });
   }
+  var backupSystem = document.getElementById('opt-backup-system');
+  if (backupSystem) {  // off unless it was ticked in this browser
+    try { backupSystem.checked = localStorage.getItem('lxcw_backup_system') === '1'; } catch (e) {}
+    backupSystem.addEventListener('change', function () {
+      try { localStorage.setItem('lxcw_backup_system', backupSystem.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
   var cleanup = document.getElementById('opt-cleanup');
   if (cleanup) {
     try { var savedCleanup = localStorage.getItem('lxcw_cleanup'); if (savedCleanup !== null) cleanup.checked = savedCleanup === '1'; } catch (e) {}
@@ -70,9 +77,10 @@
       if (!list.length) return;
       picker.open = false;
       var values = list.map(function (b) { return b.value; });
-      var withBackup = !!(backup && backup.checked) && values.some(function (v) { return v !== 'upgrade_os'; });
+      var backupApps = !!(backup && backup.checked) && values.some(function (v) { return v !== 'upgrade_os'; });
+      var backupOs = !!(backupSystem && backupSystem.checked) && values.indexOf('upgrade_os') >= 0;
       var withCleanup = !!(cleanup && cleanup.checked) && values.indexOf('update_docker') >= 0;
-      act(values.length === 1 ? values[0] : values, { backup: withBackup, cleanup: withCleanup });
+      act(values.length === 1 ? values[0] : values, { backup_apps: backupApps, backup_system: backupOs, cleanup: withCleanup });
     });
     refreshPicker();
   }

@@ -290,6 +290,8 @@ def test_options_menu_holds_the_language_and_the_backup_choice(web, token_header
     assert '<select id="lang-select"' in dialog and "Language" in dialog
     assert 'id="opt-backup"' in dialog and "Back up before updating applications and Docker stacks (backup)" in dialog
     assert 'id="opt-backup"' not in page.replace(dialog, "")                   # nowhere else on the page
+    assert 'id="opt-backup-system"' in dialog and "Back up before upgrading system packages (backup)" in dialog
+    assert 'id="opt-backup" checked' in dialog and 'id="opt-backup-system" checked' not in dialog   # system: off by default
 
 
 def test_options_menu_without_a_backup_storage(web, token_headers, sample_report):
@@ -496,3 +498,41 @@ def test_the_version_header_is_only_trusted_from_the_collector(web, sample_repor
     sample_report["collector_version"] = "0.2.0"
     web.get("/api/jobs/pending", headers={"X-Collector-Version": web_app.VERSION})    # no token: refused, not recorded
     assert not web_app.COLLECTOR_FILE.exists()
+
+
+# ---------------------------------------------------------------- the two backup options
+
+def complete_job(web, token_headers, job):
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
+
+
+def test_backup_applies_to_the_steps_whose_option_is_ticked(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"], "backup_apps": True}).get_json()
+    assert job["backup"] is True and job["backup_actions"] == ["update_docker"]
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"], "backup_system": True}).get_json()
+    assert job["backup_actions"] == ["upgrade_os"]
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"], "backup_system": True,
+                                         "backup_apps": True}).get_json()
+    assert job["backup_actions"] == ["upgrade_os", "update_docker"]
+
+
+def test_no_option_ticked_means_no_backup_and_the_old_name_still_works(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    assert job["backup"] is False and job["backup_actions"] == []
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"action": "upgrade_os", "backup_system": True}).get_json()
+    assert job["backup"] is True and job["backup_actions"] == ["upgrade_os"]
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"action": "update_docker", "backup": True}).get_json()   # former name
+    assert job["backup_actions"] == ["update_docker"]
+
+
+def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report):
+    sample_report["backup_storage"] = None
+    post_report(web, token_headers, sample_report)
+    refused = web.post("/api/actions", json={"action": "upgrade_os", "backup_system": True})
+    assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"

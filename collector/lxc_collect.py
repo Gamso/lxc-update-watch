@@ -665,13 +665,27 @@ def upgrade_step(ctid, shipper):
     return code == 0, last[:200], ""
 
 
-def upgrade_one(ctid, name, shipper):
-    ok, message, note = upgrade_step(ctid, shipper)
+def backup_actions(job):
+    """The steps of a job that are backed up first. A job without the list (older service) backs up what it used to:
+    applications and Docker stacks."""
+    if "backup_actions" in job:
+        return set(job["backup_actions"])
+    return {"update_apps", "update_docker"} if job.get("backup") else set()
+
+
+def upgrade_one(ctid, name, shipper, storage=None):
+    if storage and not backup_container(ctid, storage, shipper):
+        ok, message, note = False, "backup failed: nothing was updated", "backup failed, nothing was updated"
+    else:
+        ok, message, note = upgrade_step(ctid, shipper)
     finish(shipper, ctid, ok, note)
     return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
 
-def upgrade_containers(ctids, config, shipper):
+def upgrade_containers(ctids, config, shipper, backup=False):
+    storage = config.get("backup_storage")
+    if backup and not storage:
+        return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo, skipped = [], [], []
     for ctid in ctids:
@@ -681,11 +695,12 @@ def upgrade_containers(ctids, config, shipper):
             results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
             skipped.append(ctid)
     workers = int(config.get("upgrade_workers", 4))
-    shipper.write(f"System update of {len(todo)} container(s), {workers} in parallel\n")
+    shipper.write(f"System update of {len(todo)} container(s), {workers} in parallel"
+                  f"{', backing up first' if backup else ', no backup'}\n")
     for ctid in skipped:
         finish(shipper, ctid, False, "container stopped or not found")
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(lambda t: upgrade_one(*t, shipper), todo))
+        results += list(pool.map(lambda t: upgrade_one(*t, shipper, storage if backup else None), todo))
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -718,7 +733,8 @@ def update_apps(job, config, shipper):
     if not script:
         return [{"label": "update-apps.sh", "ok": False, "message": "official script unavailable (network issue?)"}]
     storage = config.get("backup_storage")
-    if job.get("backup") and not storage:
+    backup = "update_apps" in backup_actions(job)
+    if backup and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo, skipped = [], [], []
@@ -730,7 +746,7 @@ def update_apps(job, config, shipper):
             results.append({"label": f"CT {ctid}", "ok": False, "message": NO_UPDATE_COMMAND})
             skipped.append(ctid)
     workers = int(config.get("app_update_workers", 2))
-    backup_note = f", backing up to {storage} first" if job.get("backup") else ", no backup"
+    backup_note = f", backing up to {storage} first" if backup else ", no backup"
     shipper.write(f"Application update of {len(todo)} container(s) with the official script "
                   f"({workers} in parallel{backup_note})\n")
     for ctid in skipped:
@@ -738,7 +754,7 @@ def update_apps(job, config, shipper):
 
     def one(item):
         ctid, name = item
-        ok, message, note = apps_step(ctid, script, storage if job.get("backup") else None, shipper)
+        ok, message, note = apps_step(ctid, script, storage if backup else None, shipper)
         finish(shipper, ctid, ok, note)
         return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
@@ -839,7 +855,7 @@ def docker_step(ctid, job, shipper):
 
 def update_docker_one(ctid, name, job, config, shipper):
     """Back up if asked, then update the Docker stacks of one LXC."""
-    if job.get("backup") and not backup_container(ctid, config.get("backup_storage"), shipper):
+    if "update_docker" in backup_actions(job) and not backup_container(ctid, config.get("backup_storage"), shipper):
         ok, message, note = False, "backup failed: nothing was updated", "backup failed, nothing was updated"
     else:
         ok, message, note = docker_step(ctid, job, shipper)
@@ -849,7 +865,7 @@ def update_docker_one(ctid, name, job, config, shipper):
 
 def update_docker(job, config, shipper):
     """Update the Docker Compose stacks of the containers of a job, a few containers at a time."""
-    if job.get("backup") and not config.get("backup_storage"):
+    if "update_docker" in backup_actions(job) and not config.get("backup_storage"):
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo = [], []
@@ -859,7 +875,7 @@ def update_docker(job, config, shipper):
         else:
             results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
     workers = int(config.get("docker_update_workers", 2))
-    notes = [f"{workers} in parallel", "backup first" if job.get("backup") else "no backup",
+    notes = [f"{workers} in parallel", "backup first" if "update_docker" in backup_actions(job) else "no backup",
              "old images removed afterwards" if job.get("cleanup") else "old images kept"]
     shipper.write(f"Docker stack update of {len(todo)} container(s) ({', '.join(notes)})\n")
     for ctid in [r for r in job["ctids"] if r not in running]:
@@ -916,13 +932,13 @@ CHAIN_WORKERS = {"upgrade_os": ("upgrade_workers", 4), "update_apps": ("app_upda
 def update_chain(job, config, shipper):
     """Run several updates in one job: containers in parallel, the steps of each container one after the other.
 
-    job["actions"] lists the steps and job["targets"] the containers of each. A container is backed up once, before
-    its first step, and stops at its first failed step; the other containers carry on."""
+    job["actions"] lists the steps and job["targets"] the containers of each. A container is backed up once, right
+    before its first step that is backed up, and stops at its first failed step; the other containers carry on."""
     actions = [a for a in CHAIN_ORDER if a in job.get("actions", [])]
     targets = {a: {int(c) for c in job.get("targets", {}).get(a, [])} for a in actions}
     storage = config.get("backup_storage")
-    backup = bool(job.get("backup")) and any(a in ("update_apps", "update_docker") for a in actions)
-    if backup and not storage:
+    backed = backup_actions(job) & set(actions)
+    if backed and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     script = fetch_update_apps_script() if "update_apps" in actions else None
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
@@ -935,7 +951,8 @@ def update_chain(job, config, shipper):
             finish(shipper, ctid, False, "container stopped or not found")
     workers = max(1, min(int(config.get(CHAIN_WORKERS[a][0], CHAIN_WORKERS[a][1])) for a in actions))
     shipper.write(f"Update of {len(todo)} container(s): {' then '.join(CHAIN_NAMES[a] for a in actions)} "
-                  f"({workers} in parallel, {'backup first' if backup else 'no backup'})\n")
+                  f"({workers} in parallel, "
+                  f"{'backup before ' + ', '.join(CHAIN_NAMES[a] for a in actions if a in backed) if backed else 'no backup'})\n")
 
     def run_step(action, ctid):
         if action == "upgrade_os":
@@ -945,17 +962,21 @@ def update_chain(job, config, shipper):
                 return False, "official script unavailable (network issue?)", ""
             if pct_exec(ctid, "test -f /usr/bin/update")[0] != 0:
                 return False, NO_UPDATE_COMMAND, NO_UPDATE_COMMAND
-            return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first step
+            return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first backed up step
         return docker_step(ctid, job, shipper)
 
     def one(item):
         ctid, name = item
-        label, prefix, done = f"CT {ctid} {name}", f"[CT {ctid}] ", []
-        if backup and not backup_container(ctid, storage, shipper):
-            finish(shipper, ctid, False, "backup failed, nothing was updated")
-            return {"label": label, "ok": False, "message": "backup failed: nothing was updated"}
+        label, prefix, done, backed_up = f"CT {ctid} {name}", f"[CT {ctid}] ", [], False
         mine = [a for a in actions if ctid in targets[a]]
         for index, action in enumerate(mine):
+            if action in backed and not backed_up:
+                if not backup_container(ctid, storage, shipper):
+                    note = "nothing more was updated" if done else "nothing was updated"
+                    finish(shipper, ctid, False, f"backup failed, {note}")
+                    done.append(f"backup failed: {note}")
+                    return {"label": label, "ok": False, "message": "; ".join(done)[:200]}
+                backed_up = True
             shipper.write(f"{prefix}== {CHAIN_NAMES[action]} ==\n")
             ok, message, note = run_step(action, ctid)
             done.append(f"{CHAIN_NAMES[action]}: {message or ('ok' if ok else 'failed')}")
@@ -991,7 +1012,7 @@ def run_job(config, job):
     shipper = LogShipper(config, job["id"])
     try:
         if job["action"] == "upgrade_os":
-            results = upgrade_containers(job["ctids"], config, shipper)
+            results = upgrade_containers(job["ctids"], config, shipper, "upgrade_os" in backup_actions(job))
         elif job["action"] == "update_apps":
             results = update_apps(job, config, shipper)
         elif job["action"] == "update_docker":

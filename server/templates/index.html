@@ -26,6 +26,9 @@
 {% if view %}
 <div class="opt-row">
 {% if view.backup_storage %}<label><input type="checkbox" id="opt-backup" checked> {{ t('opt_backup', storage=view.backup_storage) }}</label>
+</div>
+<div class="opt-row">
+<label><input type="checkbox" id="opt-backup-system"> {{ t('opt_backup_system', storage=view.backup_storage) }}</label>
 {% else %}<span class="sub">{{ t('backup_unavailable')|safe }}</span>{% endif %}
 </div>
 <div class="opt-row"><label><input type="checkbox" id="opt-cleanup" checked> {{ t('opt_cleanup') }}</label></div>

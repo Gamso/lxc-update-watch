@@ -106,7 +106,7 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `github_token` | Optional. Raises the GitHub API rate limit (60 requests/hour without it). |
 | `auto_apps` | `true` by default. `false` disables the automatic helper-script detection. |
 | `apps` | Manual entries, keyed by CTID. They take precedence over the automatic detection (see below). |
-| `backup_storage` | Proxmox storage for the *Back up before updating applications* option (`pvesm status --content backup` lists them). Without it the option is unavailable. |
+| `backup_storage` | Proxmox storage for the *Back up before ...* options (`pvesm status --content backup` lists them). Without it the option is unavailable. |
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
 | `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
@@ -169,8 +169,9 @@ notes below).
   packages, in parallel. Services may restart, Docker included.
 - **Update applications** runs the official `tools/pve/update-apps.sh` unattended, one instance per container, for
   containers created by a helper script whose application has an update. With `backup_storage` set, the
-  *Back up before updating applications* option of the Options menu (gear icon, remembered by the browser) runs a
-  `vzdump` before each update. Containers that need a reboot are listed in the console.
+  *Back up before updating applications and Docker stacks* option of the Options menu (gear icon, on by default,
+  remembered by the browser) runs a `vzdump` before each update. The *Back up before upgrading system packages*
+  option next to it is off by default: tick it to back up before system updates too. Containers that need a reboot are listed in the console.
   Add-ons have no `update` command: the page shows the command to run inside the container.
 - **Update Docker stacks** is for the containers that have a Docker image with a newer version. Inside each container
   it finds the Docker Compose stacks of the running containers (Compose records the project directory and files in
@@ -190,8 +191,8 @@ notes below).
   the button. Once it is done, only the host's list is read again (the containers are not checked again).
 - **Several at once.** The ticked updates form one job. The containers run in parallel (as many as the smallest of
   the workers settings of the ticked updates), but each container goes through the steps one after the other, always
-  in this order: system, applications, Docker stacks. With the backup option, a container is backed up once, before its
-  first step. A container stops at its first failed step (the rest is shown as not run in its console tab); the other
+  in this order: system, applications, Docker stacks. A container is backed up once, right before its first step
+  that has its backup option ticked (so the system step can run without a backup, then the applications are backed up). A container stops at its first failed step (the rest is shown as not run in its console tab); the other
   containers carry on.
 Security notes: **by default the page has no login**. Anyone who can open it can read the state and the console
 output, and can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the

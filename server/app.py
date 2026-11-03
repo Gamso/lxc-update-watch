@@ -583,12 +583,16 @@ def api_actions():
     if not targets:
         api_error(400, "no_containers", "no container to update")
     actions = [a for a in actions if a in targets]
-    backup = bool(body.get("backup")) and any(a in BACKUP_ACTIONS for a in actions)
+    backup_apps = bool(body.get("backup_apps", body.get("backup")))   # "backup" is the former name of this option
+    backup_system = bool(body.get("backup_system"))
+    backup_actions = [a for a in actions
+                      if (a == "upgrade_os" and backup_system) or (a in BACKUP_ACTIONS and backup_apps)]
+    backup = bool(backup_actions)
     cleanup = bool(body.get("cleanup")) and "update_docker" in actions   # remove the old images afterwards
     if backup and not state.get("backup_storage"):
         api_error(400, "backup_not_configured", "backup_storage is not set in the collector config")
     job = {"id": uuid.uuid4().hex, "action": actions[0], "ctids": targets[actions[0]], "status": "pending",
-           "backup": backup, "cleanup": cleanup, "requested_at": now_iso(), "results": []}
+           "backup": backup, "backup_actions": backup_actions, "cleanup": cleanup, "requested_at": now_iso(), "results": []}
     if len(actions) > 1:  # several updates: each container runs its steps one after the other
         job.update(action="update_chain", actions=actions, targets=targets,
                    ctids=sorted({ctid for ctids in targets.values() for ctid in ctids}))
