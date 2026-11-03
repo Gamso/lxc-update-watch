@@ -9,6 +9,8 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - Updates of the Proxmox host itself: the packages `apt-get dist-upgrade` would install (what the node's *Updates*
   panel lists), grouped by origin (Proxmox, Debian), with a note when a new kernel needs a reboot.
+- *Upgrade the host* button: `apt-get dist-upgrade` on the node, non-interactive, with the output in the console.
+  Refused when a new kernel is included; `allow_host_upgrade: false` in the collector config removes the button.
 
 ### Removed
 - The *Refresh PVE scripts* button, its `update_pve_scripts` action and everything that supported it: the

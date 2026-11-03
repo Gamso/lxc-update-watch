@@ -21,7 +21,7 @@ COLLECTOR_FILE = STATE_FILE.with_name("collector.json")
 TOKEN = os.environ.get("LXC_WATCH_TOKEN", "")
 # The updates the page can start: a full check of the containers follows, and a backup can be taken first.
 CONTAINER_ACTIONS = ("upgrade_os", "update_apps", "update_docker")
-JOB_ACTIONS = set(CONTAINER_ACTIONS)
+JOB_ACTIONS = set(CONTAINER_ACTIONS) | {"upgrade_host"}
 BACKUP_ACTIONS = ("update_apps", "update_docker")
 LOG_MAX_BYTES = 1_000_000
 PROGRESS_MAX_AGE_S = 600       # a collection that sent nothing for this long is considered dead
@@ -45,7 +45,7 @@ app = Flask(__name__)
 
 # Endpoints used by the collector (shared token): the optional OIDC login does not apply to them.
 COLLECTOR_ENDPOINTS = {"api_report", "api_refresh_pending", "api_progress_post", "api_jobs_pending", "api_job_start",
-                       "api_job_result", "api_job_log_append"}
+                       "api_job_result", "api_job_log_append", "api_report_host"}
 app.before_request(auth.guard)
 
 
@@ -239,11 +239,12 @@ def host_view(state, tr):
     if not isinstance(host, dict):
         return None
     view = {"name": state.get("host", ""), "count": 0, "kind": "n", "badges": [], "groups": [], "kernel": False,
-            "error": ""}
+            "allowed": True, "error": ""}
     if "error" in host:
         return {**view, "text": tr("b_host_error"), "error": tr.error(host["error"])}
     packages = host.get("packages") or []
-    view.update(count=host.get("count", len(packages)), kernel=bool(host.get("kernel")))
+    view.update(count=host.get("count", len(packages)), kernel=bool(host.get("kernel")),
+                allowed=bool(host.get("allowed", True)))
     if not view["count"]:
         return {**view, "text": tr("b_host_ok"), "kind": "s"}
     for origin in sorted({p["origin"] for p in packages}, key=lambda o: (o != "Proxmox", o)):
@@ -433,6 +434,23 @@ def api_report():
     return jsonify(ok=True, containers=len(report["containers"]))
 
 
+@app.post("/api/report/host")
+def api_report_host():
+    """The collector's new reading of the Proxmox host's updates alone (after an upgrade of the host): the containers
+    are not checked again, so the rest of the last report stays as it is."""
+    require_token()
+    note_collector()
+    host = request.get_json(silent=True)
+    state = load_state()
+    if not isinstance(host, dict):
+        api_error(400, "invalid_report", "invalid report")
+    if not state:
+        api_error(400, "no_report", "no report received yet")
+    state["host_updates"] = host
+    write_json(STATE_FILE, state)
+    return jsonify(ok=True)
+
+
 def load_progress():
     """Progress of the collection in progress, or None (no collection, or it stopped sending events)."""
     progress = read_json(PROGRESS_FILE)
@@ -526,21 +544,40 @@ def api_refresh_pending():
 
 # ---------------------------------------------------------------- API: jobs
 
+def start_host_upgrade(state):
+    host = host_view(state, Translator("en"))
+    if not host or not host["count"]:
+        api_error(400, "no_host_updates", "no update to install on the host")
+    if not host["allowed"]:
+        api_error(403, "host_upgrade_disabled", "allow_host_upgrade is false in the collector config")
+    if host["kernel"]:
+        api_error(400, "host_kernel", "a new kernel is included: upgrade from the Proxmox interface")
+    job = {"id": uuid.uuid4().hex, "action": "upgrade_host", "ctids": [], "status": "pending", "backup": False,
+           "cleanup": False, "requested_at": now_iso(), "results": []}
+    LOG_FILE.unlink(missing_ok=True)
+    write_json(JOB_FILE, job)   # no refresh request: the collector sends the host's new list itself when it is done
+    return jsonify(job), 202
+
+
 @app.post("/api/actions")
 def api_actions():
     # No password: access control belongs to the network or a reverse proxy. The body must be JSON, which a
     # cross-site form cannot send (and a cross-site fetch would need a CORS preflight this service never answers).
     body = request.get_json(silent=True) or {}
     asked = body["actions"] if isinstance(body.get("actions"), list) else [body.get("action")]
+    host_upgrade = asked == ["upgrade_host"]   # the host is upgraded on its own, never chained with the containers
     actions = [a for a in CONTAINER_ACTIONS if a in asked]  # fixed order, no duplicates
-    if not all(isinstance(a, str) for a in asked) or not actions or len(asked) != len(set(asked)) \
-            or any(a not in JOB_ACTIONS for a in asked):
+    if not all(isinstance(a, str) for a in asked) or len(asked) != len(set(asked)) \
+            or any(a not in JOB_ACTIONS for a in asked) or not (actions or host_upgrade) \
+            or ("upgrade_host" in asked and not host_upgrade):
         api_error(400, "unknown_action", "unknown action")
     state = load_state()
     if not state:
         api_error(400, "no_report", "no report received yet")
     if job_is_active(load_job()):
         api_error(409, "job_running", "a job is already running")
+    if host_upgrade:
+        return start_host_upgrade(state)
     targets = {a: [ct["ctid"] for ct in CONTAINER_LISTS[a](state)] for a in actions}
     targets = {a: ctids for a, ctids in targets.items() if ctids}
     if not targets:

@@ -869,6 +869,42 @@ def update_docker(job, config, shipper):
     return sorted(results, key=lambda r: r["label"])
 
 
+def upgrade_host(job, config, shipper):
+    """apt-get dist-upgrade on the Proxmox host, like the Upgrade button of the node's Updates panel.
+
+    Refused when a new kernel is included (it needs a reboot someone should watch) or when the config forbids it."""
+    label = "Proxmox host"
+    if not config.get("allow_host_upgrade", True):
+        return [{"label": label, "ok": False, "message": "allow_host_upgrade is false in the collector config"}]
+    current = host_updates()   # read again: the list may have changed since the page was built
+    if "error" in current:
+        return [{"label": label, "ok": False, "message": "could not read the host updates (apt-get failed)"}]
+    if not current["count"]:
+        return [{"label": label, "ok": True, "message": "already up to date"}]
+    if current["kernel"]:
+        message = "a new kernel is included: upgrade from the Proxmox interface, then reboot"
+        shipper.write(f"[PVE] {message}\n")
+        return [{"label": label, "ok": False, "message": message}]
+    shipper.write(f"Upgrading {current['count']} package(s) on the Proxmox host\n")
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive", "LC_ALL": "C"}
+    code, last, _ = stream_process(
+        ["apt-get", "-y", "-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Options::=--force-confdef",
+         "dist-upgrade"], "[PVE] ", shipper, 3600, env)
+    if code == 124:
+        return [{"label": label, "ok": False, "message": "timed out after one hour"}]
+    return [{"label": label, "ok": code == 0,
+             "message": f"{current['count']} package(s) upgraded" if code == 0 else (last or f"exit code {code}")[:200]}]
+
+
+def send_host_updates(config):
+    """Send the service the host's new list of updates alone, once the host is upgraded."""
+    try:
+        server_call(config, "POST", "/api/report/host",
+                    {**host_updates(), "allowed": bool(config.get("allow_host_upgrade", True))}, timeout=30)
+    except (OSError, ValueError):   # the page keeps the previous list until the next check
+        pass
+
+
 # ---------------------------------------------------------------- several updates in one job
 
 CHAIN_ORDER = ("upgrade_os", "update_apps", "update_docker")  # base system first, then the application, then its images
@@ -960,6 +996,9 @@ def run_job(config, job):
             results = update_apps(job, config, shipper)
         elif job["action"] == "update_docker":
             results = update_docker(job, config, shipper)
+        elif job["action"] == "upgrade_host":
+            results = upgrade_host(job, config, shipper)
+            send_host_updates(config)   # only the host changed: no need to check every container again
         elif job["action"] == "update_chain":
             results = update_chain(job, config, shipper)
         else:
@@ -1027,7 +1066,7 @@ def main():
         "backup_storage": config.get("backup_storage") or None,
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "containers": containers,
-        "host_updates": host_updates(),
+        "host_updates": {**host_updates(), "allowed": bool(config.get("allow_host_upgrade", True))},
     }
 
     if args.dry_run:

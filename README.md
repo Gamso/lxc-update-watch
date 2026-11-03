@@ -10,7 +10,8 @@ and can apply them from the page, with a live console and an optional backup fir
 - Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
   several in one go (optional `vzdump` backup first).
 - Proxmox host: the packages `apt-get dist-upgrade` would install on the node itself (the *Updates* panel of the
-  Proxmox web interface), by origin (Proxmox, Debian), with a note when a new kernel needs a reboot.
+  Proxmox web interface), by origin (Proxmox, Debian), and an *Upgrade the host* button, which is refused when a
+  new kernel is included (that one is for the Proxmox interface, where you can watch the reboot).
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
   images are being checked, with a progress bar.
@@ -107,6 +108,7 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
 | `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
+| `allow_host_upgrade` | `true` by default; set it to `false` to remove the *Upgrade the host* button (the host's updates are still listed). |
 | `registry_auth` | Credentials for private registries: `{"ghcr.io": {"username": "...", "token": "..."}}`. |
 
 Environment of the web service (`/etc/lxc-update-watch.env`):
@@ -177,6 +179,13 @@ notes below).
   then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
   and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
   applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
+- **Upgrade the host** (button of the *Proxmox host* section) runs `apt-get dist-upgrade` on the node, non-interactive
+  and keeping your configuration files (`--force-confold`), with the output in the console. It is refused when the
+  list contains a Proxmox or PVE kernel, because the node must then be rebooted and that is better watched from the
+  Proxmox interface. Running guests are not stopped, but the Proxmox services (the web interface included) can restart
+  during the upgrade, so the page of Proxmox may blink. The package lists are the ones Proxmox refreshes itself every
+  day; this project never runs `apt-get update`. Set `allow_host_upgrade` to `false` in the collector config to remove
+  the button. Once it is done, only the host's list is read again (the containers are not checked again).
 - **Several at once.** The ticked updates form one job. The containers run in parallel (as many as the smallest of
   the workers settings of the ticked updates), but each container goes through the steps one after the other, always
   in this order: system, applications, Docker stacks. With the backup option, a container is backed up once, before its

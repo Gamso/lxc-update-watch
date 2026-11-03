@@ -89,9 +89,10 @@
 {% for g in h.groups %}{{ t('d_host_origin', origin=g.origin, n=g.n) }}<br>
 {% for line in g.lines %}{{ line }}<br>{% endfor %}
 {% if g.more %}{{ t('d_more', n=g.more) }}<br>{% endif %}<br>{% endfor %}
-{{ t('d_host_howto') }}{% if h.kernel %} {{ t('d_host_kernel') }}{% endif %}
+{% if h.kernel %}{{ t('d_host_kernel') }}{% elif not h.allowed %}{{ t('d_host_howto') }}{% endif %}
 </div>
 </details>
+{% if not h.kernel and h.allowed %}<div class="host-actions"><button id="act-host" type="button"{% if view.job_active %} disabled{% endif %}>{{ t('btn_upgrade_host', n=h.count) }}</button></div>{% endif %}
 {% else %}<div class="row quiet"><div class="line"><span>PVE</span><span class="name">{{ h.name }}</span>
 <span class="sys-cell"><span class="b {{ h.kind }}">{{ h.text }}</span></span>
 <span class="badges">{% if h.error %}<span class="b n" title="{{ h.error }}">{{ h.error }}</span>{% endif %}</span></div></div>

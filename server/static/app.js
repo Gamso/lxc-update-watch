@@ -51,6 +51,8 @@
       try { localStorage.setItem('lxcw_cleanup', cleanup.checked ? '1' : '0'); } catch (e) {}
     });
   }
+  var hostUpgrade = document.getElementById('act-host');
+  if (hostUpgrade) hostUpgrade.addEventListener('click', function () { act('upgrade_host'); });
   var picker = document.getElementById('act-picker'), run = document.getElementById('act-run');
   if (picker && run) {
     var boxes = [].slice.call(picker.querySelectorAll('input[type=checkbox]')), summary = document.getElementById('act-summary');

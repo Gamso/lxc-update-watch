@@ -86,3 +86,4 @@ summary.line::-webkit-details-marker{display:none}
 @keyframes flash{0%{box-shadow:0 0 0 3px var(--w-bg);border-color:var(--w-fg)}100%{box-shadow:0 0 0 0 transparent}}
 @media (prefers-reduced-motion:reduce){.checking,.spin::before,.b.pop,.row.flash{animation:none}#progress .fill{transition:none}}
 @media (max-width:640px){.line{grid-template-columns:40px minmax(0,1fr)}.line>:nth-child(n+3){grid-column:2}.detail{padding-left:14px}}
+.host-actions{margin:-2px 0 12px}
