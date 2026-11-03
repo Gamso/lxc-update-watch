@@ -9,6 +9,8 @@ and can apply them from the page, with a live console and an optional backup fir
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
 - Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
   several in one go (optional `vzdump` backup first).
+- Proxmox host: the packages `apt-get dist-upgrade` would install on the node itself (the *Updates* panel of the
+  Proxmox web interface), by origin (Proxmox, Debian), with a note when a new kernel needs a reboot.
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
   images are being checked, with a progress bar.

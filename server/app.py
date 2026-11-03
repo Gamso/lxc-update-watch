@@ -230,6 +230,32 @@ def app_badges(ct, tr, final=True):
     return badges or ([(tr("b_app_untracked"), "n")] if final else [])
 
 
+HOST_PACKAGES_SHOWN = 15
+
+
+def host_view(state, tr):
+    """The Proxmox host's own updates (what the node's Updates panel lists), ready to display; None if not reported."""
+    host = state.get("host_updates")
+    if not isinstance(host, dict):
+        return None
+    view = {"name": state.get("host", ""), "count": 0, "kind": "n", "badges": [], "groups": [], "kernel": False,
+            "error": ""}
+    if "error" in host:
+        return {**view, "text": tr("b_host_error"), "error": tr.error(host["error"])}
+    packages = host.get("packages") or []
+    view.update(count=host.get("count", len(packages)), kernel=bool(host.get("kernel")))
+    if not view["count"]:
+        return {**view, "text": tr("b_host_ok"), "kind": "s"}
+    for origin in sorted({p["origin"] for p in packages}, key=lambda o: (o != "Proxmox", o)):
+        lines = [f"{p['name']}  {p['current'] or '-'} \u2192 {p['new']}" for p in packages if p["origin"] == origin]
+        view["groups"].append({"origin": origin, "n": len(lines), "lines": lines[:HOST_PACKAGES_SHOWN],
+                               "more": max(len(lines) - HOST_PACKAGES_SHOWN, 0)})
+        view["badges"].append((f"{origin} {len(lines)}", "n"))
+    if view["kernel"]:
+        view["badges"].append((tr("b_host_kernel"), "w"))
+    return {**view, "text": tr.plural("b_packages", view["count"]), "kind": "w"}
+
+
 def build_view(state, tr):
     rows = []
     for ct in state["containers"]:
@@ -278,6 +304,7 @@ def build_view(state, tr):
         "n_packages": sum(r.get("os_updates") or 0 for r in rows),
         "n_apps": sum(r["app_pending"] + len(r["docker_pending"]) for r in rows),
         "n_untracked": sum(1 for r in running if not r.get("app") and not r.get("docker")),
+        "host_updates": host_view(state, tr),
         "collector_version": collector_version,
         "version_mismatch": bool(collector_version) and collector_version != VERSION,
     }

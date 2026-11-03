@@ -75,6 +75,34 @@ def list_containers():
     return containers
 
 
+# ---------------------------------------------------------------- Proxmox host updates
+
+HOST_INST_RE = re.compile(r"^Inst (\S+)(?: \[([^\]]+)\])? \((\S+) ([^\s:\]]+)")
+KERNEL_RE = re.compile(r"^(?:proxmox|pve)-kernel-\d")
+
+
+def parse_host_upgrades(text):
+    """Packages of an `apt-get -s dist-upgrade` output, with the origin (Proxmox, Debian...) the new version comes from."""
+    packages = []
+    for line in text.splitlines():
+        match = HOST_INST_RE.match(line)
+        if match:
+            name, current, new, origin = match.groups()
+            packages.append({"name": name, "current": current or "", "new": new, "origin": origin.split("-")[0]})
+    return sorted(packages, key=lambda p: (p["origin"], p["name"]))
+
+
+def host_updates():
+    """What `apt-get dist-upgrade` would install on the Proxmox host, like the Upgrade button of the node's Updates panel.
+
+    Nothing is changed: Proxmox refreshes the package lists itself (pve-daily-update), this only reads them."""
+    code, out = run(["env", "LC_ALL=C", "apt-get", "-s", "dist-upgrade"], timeout=120)
+    if code != 0:
+        return {"error": "apt_failed"}
+    packages = parse_host_upgrades(out)
+    return {"count": len(packages), "packages": packages, "kernel": any(KERNEL_RE.match(p["name"]) for p in packages)}
+
+
 # ---------------------------------------------------------------- operating system updates
 
 def os_updates(ctid):
@@ -999,6 +1027,7 @@ def main():
         "backup_storage": config.get("backup_storage") or None,
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "containers": containers,
+        "host_updates": host_updates(),
     }
 
     if args.dry_run:

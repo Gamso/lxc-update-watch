@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Updates of the Proxmox host itself: the packages `apt-get dist-upgrade` would install (what the node's *Updates*
+  panel lists), grouped by origin (Proxmox, Debian), with a note when a new kernel needs a reboot.
+
 ### Removed
 - The *Refresh PVE scripts* button, its `update_pve_scripts` action and everything that supported it: the
   `pve_scripts_local` setting, `lxc_collect.py --probe-pve-scripts` and `deploy.ps1 -Action probe-pve` (the menu of
