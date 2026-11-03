@@ -205,9 +205,6 @@ def test_a_check_request_runs_a_collection(monkeypatch):
     assert c.handle_requests({}) is True and ran == []
 
 
-def test_refreshing_the_pve_scripts_does_not_trigger_a_check(monkeypatch):
-    ran = pending_state(monkeypatch, {"refresh": False, "job": {"action": "update_pve_scripts"}})
-    assert c.handle_requests({}) is False and ran == ["update_pve_scripts"]
 
 
 def test_updates_are_followed_by_a_check(monkeypatch):
@@ -402,13 +399,59 @@ def test_chain_runs_the_steps_in_a_fixed_order(monkeypatch):
     assert text.count("== finished: ok ==") == 1             # one end marker per container, not per step
 
 
-def test_chain_backs_up_once_before_the_first_step(monkeypatch):
+CHAIN = {"actions": ["upgrade_os", "update_docker"], "targets": {"upgrade_os": [101], "update_docker": [101]},
+         "ctids": [101]}
+
+
+def test_chain_backs_up_once_before_the_first_backed_up_step(monkeypatch):
     commands = chain_env(monkeypatch)
-    job = {"actions": ["upgrade_os", "update_docker"], "targets": {"upgrade_os": [101], "update_docker": [101]},
-           "ctids": [101], "backup": True}
-    results, _ = run_chain(job)
+    results, _ = run_chain({**CHAIN, "backup": True, "backup_actions": ["upgrade_os", "update_docker"]})
     assert results[0]["ok"] is True
     assert commands[0][:2] == ["vzdump", "101"] and sum(cmd[0] == "vzdump" for cmd in commands) == 1
+
+
+def test_chain_does_not_back_up_the_system_step_unless_asked(monkeypatch):
+    commands = chain_env(monkeypatch)
+    results, text = run_chain({**CHAIN, "backup": True, "backup_actions": ["update_docker"]})
+    kinds = ["vzdump" if cmd[0] == "vzdump" else "compose" if "compose" in " ".join(cmd) else "system"
+             for cmd in commands]
+    assert results[0]["ok"] is True and kinds[:2] == ["system", "vzdump"] and set(kinds[2:]) == {"compose"}   # backed up right before Docker
+    assert "backup before Docker stacks" in text
+    commands.clear()
+    results, text = run_chain({**CHAIN, "backup": False, "backup_actions": []})
+    assert not any(cmd[0] == "vzdump" for cmd in commands) and "no backup" in text
+
+
+def test_chain_with_only_the_system_backup_leaves_the_applications_alone(monkeypatch):
+    commands = chain_env(monkeypatch)
+    run_chain({**CHAIN, "backup": True, "backup_actions": ["upgrade_os"]})
+    assert commands[0][:2] == ["vzdump", "101"] and sum(cmd[0] == "vzdump" for cmd in commands) == 1
+
+
+def test_a_failed_backup_in_the_middle_keeps_what_was_done(monkeypatch):
+    chain_env(monkeypatch, fail=("vzdump",))
+    results, text = run_chain({**CHAIN, "backup": True, "backup_actions": ["update_docker"]})
+    assert results[0]["ok"] is False and results[0]["message"].startswith("system: ")
+    assert "backup failed: nothing more was updated" in results[0]["message"]
+    assert not any("compose" in line for line in text.splitlines())
+
+
+def test_the_system_update_alone_is_backed_up_only_when_asked(monkeypatch):
+    commands = docker_env(monkeypatch)
+    monkeypatch.setattr(c, "list_containers", lambda: [("101", "running", "a")])
+    c.upgrade_containers([101], {"backup_storage": "backup", "upgrade_workers": 1}, Shipper(), backup=True)
+    assert commands[0][:2] == ["vzdump", "101"] and commands[1][:2] == ["pct", "exec"]
+    commands.clear()
+    c.upgrade_containers([101], {"backup_storage": "backup", "upgrade_workers": 1}, Shipper())
+    assert [cmd[0] for cmd in commands] == ["pct"]
+    nostorage = c.upgrade_containers([101], {}, Shipper(), backup=True)
+    assert nostorage[0]["label"] == "Backup"
+
+
+def test_a_job_from_an_older_service_backs_up_applications_and_docker():
+    assert c.backup_actions({"backup": True}) == {"update_apps", "update_docker"}
+    assert c.backup_actions({"backup": False}) == set()
+    assert c.backup_actions({"backup": True, "backup_actions": ["upgrade_os"]}) == {"upgrade_os"}
 
 
 def test_chain_without_apps_or_docker_ignores_the_backup(monkeypatch):
@@ -449,10 +492,10 @@ def test_a_failure_in_one_container_does_not_stop_the_others(monkeypatch):
 def test_chain_needs_the_backup_storage_and_skips_stopped_containers(monkeypatch):
     chain_env(monkeypatch)
     job = {"actions": ["update_apps", "update_docker"], "targets": {"update_apps": [101], "update_docker": [101]},
-           "ctids": [101], "backup": True}
+           "ctids": [101], "backup": True, "backup_actions": ["update_apps", "update_docker"]}
     assert run_chain(job, {"backup_storage": None})[0][0]["label"] == "Backup"
     monkeypatch.setattr(c, "list_containers", lambda: [("101", "stopped", "a")])
-    results, text = run_chain({**job, "backup": False})
+    results, text = run_chain({**job, "backup": False, "backup_actions": []})
     assert results[0]["message"] == "container stopped or not found" and "== finished: failed ==" in text
 
 

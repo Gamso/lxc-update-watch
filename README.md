@@ -4,11 +4,16 @@ A small web page that shows which of your Proxmox LXC containers have **system u
 updates** (community-scripts helper scripts, add-ons, GitHub releases, apt packages) and **Docker image updates**,
 and can apply them from the page, with a live console and an optional backup first.
 
+![The page: Proxmox host updates and the containers to update](docs/screenshot.png)
+
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
 - Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
-  several in one go (optional `vzdump` backup first), and refresh of the scripts in *PVE Scripts Local*.
+  several in one go (optional `vzdump` backup first).
+- Proxmox host: the packages `apt-get dist-upgrade` would install on the node itself (the *Updates* panel of the
+  Proxmox web interface), by origin (Proxmox, Debian), and an *Upgrade the host* button, which is refused when a
+  new kernel is included (that one is for the Proxmox interface, where you can watch the reboot).
 - Bilingual interface (English / French), chosen with the EN / FR switch or the browser language.
 - Live check: **Check now** animates each container row while its system packages, application version and Docker
   images are being checked, with a progress bar.
@@ -64,7 +69,7 @@ If PowerShell refuses to run the script: `powershell -ExecutionPolicy Bypass -Fi
 - Replaced files are backed up on Proxmox (`.bak-YYYYMMDDHHMMSS`, three kept). Your
   `/etc/lxc-update-watch.json` is never overwritten: only the token (aligned with the service's) and missing keys
   are added, with a backup.
-- Other actions: `collector`, `service`, `config`, `run-now`, `probe-pve`, `logs`.
+- Other actions: `collector`, `service`, `config`, `run-now`, `logs`.
 
 ### By hand
 
@@ -101,11 +106,11 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `github_token` | Optional. Raises the GitHub API rate limit (60 requests/hour without it). |
 | `auto_apps` | `true` by default. `false` disables the automatic helper-script detection. |
 | `apps` | Manual entries, keyed by CTID. They take precedence over the automatic detection (see below). |
-| `backup_storage` | Proxmox storage for the *Back up before updating applications* option (`pvesm status --content backup` lists them). Without it the option is unavailable. |
-| `pve_scripts_local` | `{"url": "http://<ct-ip>:3000"}`, needed for the *Refresh PVE scripts* button. |
+| `backup_storage` | Proxmox storage for the *Back up before ...* options (`pvesm status --content backup` lists them). Without it the option is unavailable. |
 | `upgrade_workers` | Containers upgraded in parallel by the system update button (default 4). |
 | `app_update_workers` | Containers updated in parallel by the application update button (default 2). |
 | `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
+| `allow_host_upgrade` | `true` by default; set it to `false` to remove the *Upgrade the host* button (the host's updates are still listed). |
 | `registry_auth` | Credentials for private registries: `{"ghcr.io": {"username": "...", "token": "..."}}`. |
 
 Environment of the web service (`/etc/lxc-update-watch.env`):
@@ -164,8 +169,9 @@ notes below).
   packages, in parallel. Services may restart, Docker included.
 - **Update applications** runs the official `tools/pve/update-apps.sh` unattended, one instance per container, for
   containers created by a helper script whose application has an update. With `backup_storage` set, the
-  *Back up before updating applications* option of the Options menu (gear icon, remembered by the browser) runs a
-  `vzdump` before each update. Containers that need a reboot are listed in the console.
+  *Back up before updating applications and Docker stacks* option of the Options menu (gear icon, on by default,
+  remembered by the browser) runs a `vzdump` before each update. The *Back up before upgrading system packages*
+  option next to it is off by default: tick it to back up before system updates too. Containers that need a reboot are listed in the console.
   Add-ons have no `update` command: the page shows the command to run inside the container.
 - **Update Docker stacks** is for the containers that have a Docker image with a newer version. Inside each container
   it finds the Docker Compose stacks of the running containers (Compose records the project directory and files in
@@ -176,14 +182,20 @@ notes below).
   then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
   and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
   applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
+- **Upgrade the host** (button of the *Proxmox host* section) runs `apt-get dist-upgrade` on the node, non-interactive
+  and keeping your configuration files (`--force-confold`), with the output in the console. It is refused when the
+  list contains a Proxmox or PVE kernel, because the node must then be rebooted and that is better watched from the
+  Proxmox interface. Running guests are not stopped, but the Proxmox services (the web interface included) can restart
+  during the upgrade, so the page of Proxmox may blink. The package lists are the ones Proxmox refreshes itself every
+  day; this project never runs `apt-get update`. Set `allow_host_upgrade` to `false` in the collector config to remove
+  the button. Once it is done, only the host's list is read again (the containers are not checked again).
+- **Last job card.** The results of the last job stay on the page, with its console. *Clear* (once the job is over)
+  removes them; more than three successes are folded into one line, failures always stay visible.
 - **Several at once.** The ticked updates form one job. The containers run in parallel (as many as the smallest of
   the workers settings of the ticked updates), but each container goes through the steps one after the other, always
-  in this order: system, applications, Docker stacks. With the backup option, a container is backed up once, before its
-  first step. A container stops at its first failed step (the rest is shown as not run in its console tab); the other
+  in this order: system, applications, Docker stacks. A container is backed up once, right before its first step
+  that has its backup option ticked (so the system step can run without a backup, then the applications are backed up). A container stops at its first failed step (the rest is shown as not run in its console tab); the other
   containers carry on.
-- **Refresh PVE scripts** (under *Check now*) reproduces *Update all downloaded scripts* of PVE Scripts Local through its internal API
-  (undocumented, so it may break with its updates; `deploy.ps1 -Action probe-pve` checks it without changing anything).
-
 Security notes: **by default the page has no login**. Anyone who can open it can read the state and the console
 output, and can start the update buttons, which run `apt-get upgrade` and the community update scripts as root on the
 host through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and

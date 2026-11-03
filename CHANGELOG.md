@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-03
+
+### Added
+- Updates of the Proxmox host itself: the packages `apt-get dist-upgrade` would install (what the node's *Updates*
+  panel lists), grouped by origin (Proxmox, Debian), with a note when a new kernel needs a reboot.
+- *Upgrade the host* button: `apt-get dist-upgrade` on the node, non-interactive, with the output in the console.
+  Refused when a new kernel is included; `allow_host_upgrade: false` in the collector config removes the button.
+  Afterwards only the host's list is read again, not every container.
+
+### Added
+- *Clear* button on the card of the last job (once it is over): it removes the results and the console output from
+  the page. When more than three containers succeeded, their lines are folded into one ("22 succeeded"); the
+  failures always stay visible.
+
+### Changed
+- Two backup options instead of one, in the Options menu: back up before updating applications and Docker stacks (on
+  by default, as before) and back up before upgrading system packages (off by default). A combined update backs the
+  container up right before its first step that has its option ticked. The API takes `backup_apps` and
+  `backup_system` (`backup` still means `backup_apps`).
+
+### Removed
+- The *Refresh PVE scripts* button, its `update_pve_scripts` action and everything that supported it: the
+  `pve_scripts_local` setting, `lxc_collect.py --probe-pve-scripts` and `deploy.ps1 -Action probe-pve` (the menu of
+  `deploy.ps1` is renumbered). It only refreshed the scripts of PVE Scripts Local, which the application updates of
+  this project never use: they read the helper scripts straight from GitHub.
+
 ## [0.3.1] - 2026-11-01
 
 ### Fixed
@@ -83,7 +109,8 @@ First public release.
 - Project versioning (`VERSION`, changelog, versions shown in the page footer, in the report and by `deploy.ps1`)
   and an automated test suite.
 
-[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.1.0...v0.2.0

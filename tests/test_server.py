@@ -139,7 +139,7 @@ def test_backup_needs_a_configured_storage(web, token_headers, sample_report):
 def test_only_one_job_at_a_time(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     assert web.post("/api/actions", json={"action": "upgrade_os"}).status_code == 202
-    again = web.post("/api/actions", json={"action": "update_pve_scripts"})
+    again = web.post("/api/actions", json={"action": "update_apps"})
     assert again.status_code == 409 and again.get_json()["code"] == "job_running"
 
 
@@ -165,7 +165,7 @@ def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     page = web.get("/").get_data(as_text=True)
     assert "Application update (with backup)" in page and "finished with errors" in page and "boom" in page
     assert web.get("/api/status").get_json()["job"] == "done"
-    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 202
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
 
 
 def test_log_is_capped(web, token_headers, sample_report, monkeypatch):
@@ -290,6 +290,8 @@ def test_options_menu_holds_the_language_and_the_backup_choice(web, token_header
     assert '<select id="lang-select"' in dialog and "Language" in dialog
     assert 'id="opt-backup"' in dialog and "Back up before updating applications and Docker stacks (backup)" in dialog
     assert 'id="opt-backup"' not in page.replace(dialog, "")                   # nowhere else on the page
+    assert 'id="opt-backup-system"' in dialog and "Back up before upgrading system packages (backup)" in dialog
+    assert 'id="opt-backup" checked' in dialog and 'id="opt-backup-system" checked' not in dialog   # system: off by default
 
 
 def test_options_menu_without_a_backup_storage(web, token_headers, sample_report):
@@ -304,19 +306,18 @@ def test_options_menu_is_available_before_the_first_report(web):
     assert 'id="options-dialog"' in page and '<select id="lang-select"' in page
 
 
-def test_pve_scripts_button_sits_under_check_now(web, token_headers, sample_report):
+def test_page_has_no_pve_scripts_button_any_more(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert page.index('id="refresh"') < page.index('id="act-pve"') < page.index('class="actions"')
-    actions = page[page.index('class="actions"'):]
-    assert 'id="act-pve"' not in actions and 'id="act-picker"' in actions and 'id="act-run"' in actions
+    assert page.index('id="refresh"') < page.index('class="actions"') and 'id="act-pve"' not in page
+    assert web.post("/api/actions", json={"action": "update_pve_scripts"}).status_code == 400
 
 
 # ---------------------------------------------------------------- actions need no password
 
 def test_actions_run_without_any_password(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    for action, expected in (("update_pve_scripts", []), ("upgrade_os", [100, 102])):
+    for action, expected in (("update_docker", [101]), ("upgrade_os", [100, 102])):
         response = web.post("/api/actions", json={"action": action})
         assert response.status_code == 202 and response.get_json()["ctids"] == expected
         pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
@@ -327,7 +328,7 @@ def test_page_has_no_password_prompt(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
     assert "pw-dialog" not in page and "X-Admin-Password" not in page and "lxcw_pw" not in page
-    assert all(f'id="{button}"' in page for button in ("act-picker", "act-run", "act-pve")) and 'id="msg"' in page
+    assert all(f'id="{button}"' in page for button in ("act-picker", "act-run")) and 'id="msg"' in page
 
 
 def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
@@ -338,13 +339,6 @@ def test_actions_only_accept_a_json_body(web, token_headers, sample_report):
 
 
 
-def test_only_updates_of_the_containers_ask_for_a_check(web, token_headers, sample_report):
-    post_report(web, token_headers, sample_report)
-    job = web.post("/api/actions", json={"action": "update_pve_scripts"}).get_json()
-    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is False
-    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
-    web.post("/api/actions", json={"action": "upgrade_os"})
-    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
 
 
 # ---------------------------------------------------------------- console tabs
@@ -359,11 +353,6 @@ def test_console_has_one_tab_per_container_of_the_job(web, token_headers, sample
     assert ">Tous</button>" in web.get("/").get_data(as_text=True)
 
 
-def test_console_has_no_tabs_for_a_job_without_containers(web, token_headers, sample_report):
-    post_report(web, token_headers, sample_report)
-    web.post("/api/actions", json={"action": "update_pve_scripts"})
-    page = web.get("/").get_data(as_text=True)
-    assert 'id="console"' in page and 'id="console-tabs"' not in page
 
 
 # ---------------------------------------------------------------- Docker stack updates
@@ -461,7 +450,7 @@ def test_actions_with_nothing_to_update_are_dropped(web, token_headers, sample_r
 
 def test_invalid_lists_of_actions_are_refused(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
-    for actions in ([], ["nope"], ["upgrade_os", "upgrade_os"], ["update_pve_scripts", "upgrade_os"], [["upgrade_os"]], "upgrade_os"):
+    for actions in ([], ["nope"], ["upgrade_os", "upgrade_os"], ["update_pve_scripts"], [["upgrade_os"]], "upgrade_os"):
         response = web.post("/api/actions", json={"actions": actions})
         assert response.status_code == 400, actions
     assert web.get("/api/status").get_json()["job"] is None
@@ -509,3 +498,82 @@ def test_the_version_header_is_only_trusted_from_the_collector(web, sample_repor
     sample_report["collector_version"] = "0.2.0"
     web.get("/api/jobs/pending", headers={"X-Collector-Version": web_app.VERSION})    # no token: refused, not recorded
     assert not web_app.COLLECTOR_FILE.exists()
+
+
+# ---------------------------------------------------------------- clearing the last job
+
+def finished_job(web, token_headers, results):
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/log", json={"text": "output\n"}, headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": results}, headers=token_headers)
+    return job
+
+
+def test_many_successes_are_folded_and_failures_stay_visible(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    finished_job(web, token_headers, [{"label": f"CT {n}", "ok": True, "message": "done"} for n in range(5)]
+                 + [{"label": "CT 9", "ok": False, "message": "boom"}])
+    page = web.get("/").get_data(as_text=True)
+    assert "5 succeeded" in page and 'class="res ko">\u2717 CT 9 : boom' in page
+    assert page.index("CT 9 : boom") < page.index("5 succeeded")
+    assert 'id="job-dismiss"' in page and "Clear" in page
+
+
+def test_a_few_successes_are_listed_as_they_are(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    finished_job(web, token_headers, [{"label": "CT 1", "ok": True, "message": "done"}])
+    assert "succeeded" not in web.get("/").get_data(as_text=True)
+
+
+def test_the_last_job_can_be_cleared_once_it_is_over(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    assert web.post("/api/jobs/dismiss", json={}).status_code == 409           # still pending
+    assert 'id="job-dismiss"' not in web.get("/").get_data(as_text=True)
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
+    assert web.post("/api/jobs/dismiss", data="x=1").status_code == 400         # a form cannot clear it
+    assert web.post("/api/jobs/dismiss", json={}).status_code == 200
+    page = web.get("/").get_data(as_text=True)
+    assert 'class="job"' not in page and web.get("/api/status").get_json()["job"] is None
+    assert web.post("/api/jobs/dismiss", json={}).status_code == 200            # nothing left: still fine
+    assert web.post("/api/actions", json={"action": "upgrade_os"}).status_code == 202   # and a new one can start
+
+
+# ---------------------------------------------------------------- the two backup options
+
+def complete_job(web, token_headers, job):
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
+
+
+def test_backup_applies_to_the_steps_whose_option_is_ticked(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"], "backup_apps": True}).get_json()
+    assert job["backup"] is True and job["backup_actions"] == ["update_docker"]
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"], "backup_system": True}).get_json()
+    assert job["backup_actions"] == ["upgrade_os"]
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"actions": ["upgrade_os", "update_docker"], "backup_system": True,
+                                         "backup_apps": True}).get_json()
+    assert job["backup_actions"] == ["upgrade_os", "update_docker"]
+
+
+def test_no_option_ticked_means_no_backup_and_the_old_name_still_works(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    assert job["backup"] is False and job["backup_actions"] == []
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"action": "upgrade_os", "backup_system": True}).get_json()
+    assert job["backup"] is True and job["backup_actions"] == ["upgrade_os"]
+    complete_job(web, token_headers, job)
+    job = web.post("/api/actions", json={"action": "update_docker", "backup": True}).get_json()   # former name
+    assert job["backup_actions"] == ["update_docker"]
+
+
+def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report):
+    sample_report["backup_storage"] = None
+    post_report(web, token_headers, sample_report)
+    refused = web.post("/api/actions", json={"action": "upgrade_os", "backup_system": True})
+    assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"

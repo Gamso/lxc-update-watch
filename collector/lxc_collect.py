@@ -75,6 +75,34 @@ def list_containers():
     return containers
 
 
+# ---------------------------------------------------------------- Proxmox host updates
+
+HOST_INST_RE = re.compile(r"^Inst (\S+)(?: \[([^\]]+)\])? \((\S+) ([^\s:\]]+)")
+KERNEL_RE = re.compile(r"^(?:proxmox|pve)-kernel-\d")
+
+
+def parse_host_upgrades(text):
+    """Packages of an `apt-get -s dist-upgrade` output, with the origin (Proxmox, Debian...) the new version comes from."""
+    packages = []
+    for line in text.splitlines():
+        match = HOST_INST_RE.match(line)
+        if match:
+            name, current, new, origin = match.groups()
+            packages.append({"name": name, "current": current or "", "new": new, "origin": origin.split("-")[0]})
+    return sorted(packages, key=lambda p: (p["origin"], p["name"]))
+
+
+def host_updates():
+    """What `apt-get dist-upgrade` would install on the Proxmox host, like the Upgrade button of the node's Updates panel.
+
+    Nothing is changed: Proxmox refreshes the package lists itself (pve-daily-update), this only reads them."""
+    code, out = run(["env", "LC_ALL=C", "apt-get", "-s", "dist-upgrade"], timeout=120)
+    if code != 0:
+        return {"error": "apt_failed"}
+    packages = parse_host_upgrades(out)
+    return {"count": len(packages), "packages": packages, "kernel": any(KERNEL_RE.match(p["name"]) for p in packages)}
+
+
 # ---------------------------------------------------------------- operating system updates
 
 def os_updates(ctid):
@@ -637,13 +665,27 @@ def upgrade_step(ctid, shipper):
     return code == 0, last[:200], ""
 
 
-def upgrade_one(ctid, name, shipper):
-    ok, message, note = upgrade_step(ctid, shipper)
+def backup_actions(job):
+    """The steps of a job that are backed up first. A job without the list (older service) backs up what it used to:
+    applications and Docker stacks."""
+    if "backup_actions" in job:
+        return set(job["backup_actions"])
+    return {"update_apps", "update_docker"} if job.get("backup") else set()
+
+
+def upgrade_one(ctid, name, shipper, storage=None):
+    if storage and not backup_container(ctid, storage, shipper):
+        ok, message, note = False, "backup failed: nothing was updated", "backup failed, nothing was updated"
+    else:
+        ok, message, note = upgrade_step(ctid, shipper)
     finish(shipper, ctid, ok, note)
     return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
 
-def upgrade_containers(ctids, config, shipper):
+def upgrade_containers(ctids, config, shipper, backup=False):
+    storage = config.get("backup_storage")
+    if backup and not storage:
+        return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo, skipped = [], [], []
     for ctid in ctids:
@@ -653,11 +695,12 @@ def upgrade_containers(ctids, config, shipper):
             results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
             skipped.append(ctid)
     workers = int(config.get("upgrade_workers", 4))
-    shipper.write(f"System update of {len(todo)} container(s), {workers} in parallel\n")
+    shipper.write(f"System update of {len(todo)} container(s), {workers} in parallel"
+                  f"{', backing up first' if backup else ', no backup'}\n")
     for ctid in skipped:
         finish(shipper, ctid, False, "container stopped or not found")
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(lambda t: upgrade_one(*t, shipper), todo))
+        results += list(pool.map(lambda t: upgrade_one(*t, shipper, storage if backup else None), todo))
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -690,7 +733,8 @@ def update_apps(job, config, shipper):
     if not script:
         return [{"label": "update-apps.sh", "ok": False, "message": "official script unavailable (network issue?)"}]
     storage = config.get("backup_storage")
-    if job.get("backup") and not storage:
+    backup = "update_apps" in backup_actions(job)
+    if backup and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo, skipped = [], [], []
@@ -702,7 +746,7 @@ def update_apps(job, config, shipper):
             results.append({"label": f"CT {ctid}", "ok": False, "message": NO_UPDATE_COMMAND})
             skipped.append(ctid)
     workers = int(config.get("app_update_workers", 2))
-    backup_note = f", backing up to {storage} first" if job.get("backup") else ", no backup"
+    backup_note = f", backing up to {storage} first" if backup else ", no backup"
     shipper.write(f"Application update of {len(todo)} container(s) with the official script "
                   f"({workers} in parallel{backup_note})\n")
     for ctid in skipped:
@@ -710,7 +754,7 @@ def update_apps(job, config, shipper):
 
     def one(item):
         ctid, name = item
-        ok, message, note = apps_step(ctid, script, storage if job.get("backup") else None, shipper)
+        ok, message, note = apps_step(ctid, script, storage if backup else None, shipper)
         finish(shipper, ctid, ok, note)
         return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
@@ -811,7 +855,7 @@ def docker_step(ctid, job, shipper):
 
 def update_docker_one(ctid, name, job, config, shipper):
     """Back up if asked, then update the Docker stacks of one LXC."""
-    if job.get("backup") and not backup_container(ctid, config.get("backup_storage"), shipper):
+    if "update_docker" in backup_actions(job) and not backup_container(ctid, config.get("backup_storage"), shipper):
         ok, message, note = False, "backup failed: nothing was updated", "backup failed, nothing was updated"
     else:
         ok, message, note = docker_step(ctid, job, shipper)
@@ -821,7 +865,7 @@ def update_docker_one(ctid, name, job, config, shipper):
 
 def update_docker(job, config, shipper):
     """Update the Docker Compose stacks of the containers of a job, a few containers at a time."""
-    if job.get("backup") and not config.get("backup_storage"):
+    if "update_docker" in backup_actions(job) and not config.get("backup_storage"):
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo = [], []
@@ -831,7 +875,7 @@ def update_docker(job, config, shipper):
         else:
             results.append({"label": f"CT {ctid}", "ok": False, "message": "container stopped or not found"})
     workers = int(config.get("docker_update_workers", 2))
-    notes = [f"{workers} in parallel", "backup first" if job.get("backup") else "no backup",
+    notes = [f"{workers} in parallel", "backup first" if "update_docker" in backup_actions(job) else "no backup",
              "old images removed afterwards" if job.get("cleanup") else "old images kept"]
     shipper.write(f"Docker stack update of {len(todo)} container(s) ({', '.join(notes)})\n")
     for ctid in [r for r in job["ctids"] if r not in running]:
@@ -839,6 +883,42 @@ def update_docker(job, config, shipper):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results += list(pool.map(lambda item: update_docker_one(*item, job, config, shipper), todo))
     return sorted(results, key=lambda r: r["label"])
+
+
+def upgrade_host(job, config, shipper):
+    """apt-get dist-upgrade on the Proxmox host, like the Upgrade button of the node's Updates panel.
+
+    Refused when a new kernel is included (it needs a reboot someone should watch) or when the config forbids it."""
+    label = "Proxmox host"
+    if not config.get("allow_host_upgrade", True):
+        return [{"label": label, "ok": False, "message": "allow_host_upgrade is false in the collector config"}]
+    current = host_updates()   # read again: the list may have changed since the page was built
+    if "error" in current:
+        return [{"label": label, "ok": False, "message": "could not read the host updates (apt-get failed)"}]
+    if not current["count"]:
+        return [{"label": label, "ok": True, "message": "already up to date"}]
+    if current["kernel"]:
+        message = "a new kernel is included: upgrade from the Proxmox interface, then reboot"
+        shipper.write(f"[PVE] {message}\n")
+        return [{"label": label, "ok": False, "message": message}]
+    shipper.write(f"Upgrading {current['count']} package(s) on the Proxmox host\n")
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive", "LC_ALL": "C"}
+    code, last, _ = stream_process(
+        ["apt-get", "-y", "-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Options::=--force-confdef",
+         "dist-upgrade"], "[PVE] ", shipper, 3600, env)
+    if code == 124:
+        return [{"label": label, "ok": False, "message": "timed out after one hour"}]
+    return [{"label": label, "ok": code == 0,
+             "message": f"{current['count']} package(s) upgraded" if code == 0 else (last or f"exit code {code}")[:200]}]
+
+
+def send_host_updates(config):
+    """Send the service the host's new list of updates alone, once the host is upgraded."""
+    try:
+        server_call(config, "POST", "/api/report/host",
+                    {**host_updates(), "allowed": bool(config.get("allow_host_upgrade", True))}, timeout=30)
+    except (OSError, ValueError):   # the page keeps the previous list until the next check
+        pass
 
 
 # ---------------------------------------------------------------- several updates in one job
@@ -852,13 +932,13 @@ CHAIN_WORKERS = {"upgrade_os": ("upgrade_workers", 4), "update_apps": ("app_upda
 def update_chain(job, config, shipper):
     """Run several updates in one job: containers in parallel, the steps of each container one after the other.
 
-    job["actions"] lists the steps and job["targets"] the containers of each. A container is backed up once, before
-    its first step, and stops at its first failed step; the other containers carry on."""
+    job["actions"] lists the steps and job["targets"] the containers of each. A container is backed up once, right
+    before its first step that is backed up, and stops at its first failed step; the other containers carry on."""
     actions = [a for a in CHAIN_ORDER if a in job.get("actions", [])]
     targets = {a: {int(c) for c in job.get("targets", {}).get(a, [])} for a in actions}
     storage = config.get("backup_storage")
-    backup = bool(job.get("backup")) and any(a in ("update_apps", "update_docker") for a in actions)
-    if backup and not storage:
+    backed = backup_actions(job) & set(actions)
+    if backed and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
     script = fetch_update_apps_script() if "update_apps" in actions else None
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
@@ -871,7 +951,8 @@ def update_chain(job, config, shipper):
             finish(shipper, ctid, False, "container stopped or not found")
     workers = max(1, min(int(config.get(CHAIN_WORKERS[a][0], CHAIN_WORKERS[a][1])) for a in actions))
     shipper.write(f"Update of {len(todo)} container(s): {' then '.join(CHAIN_NAMES[a] for a in actions)} "
-                  f"({workers} in parallel, {'backup first' if backup else 'no backup'})\n")
+                  f"({workers} in parallel, "
+                  f"{'backup before ' + ', '.join(CHAIN_NAMES[a] for a in actions if a in backed) if backed else 'no backup'})\n")
 
     def run_step(action, ctid):
         if action == "upgrade_os":
@@ -881,17 +962,21 @@ def update_chain(job, config, shipper):
                 return False, "official script unavailable (network issue?)", ""
             if pct_exec(ctid, "test -f /usr/bin/update")[0] != 0:
                 return False, NO_UPDATE_COMMAND, NO_UPDATE_COMMAND
-            return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first step
+            return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first backed up step
         return docker_step(ctid, job, shipper)
 
     def one(item):
         ctid, name = item
-        label, prefix, done = f"CT {ctid} {name}", f"[CT {ctid}] ", []
-        if backup and not backup_container(ctid, storage, shipper):
-            finish(shipper, ctid, False, "backup failed, nothing was updated")
-            return {"label": label, "ok": False, "message": "backup failed: nothing was updated"}
+        label, prefix, done, backed_up = f"CT {ctid} {name}", f"[CT {ctid}] ", [], False
         mine = [a for a in actions if ctid in targets[a]]
         for index, action in enumerate(mine):
+            if action in backed and not backed_up:
+                if not backup_container(ctid, storage, shipper):
+                    note = "nothing more was updated" if done else "nothing was updated"
+                    finish(shipper, ctid, False, f"backup failed, {note}")
+                    done.append(f"backup failed: {note}")
+                    return {"label": label, "ok": False, "message": "; ".join(done)[:200]}
+                backed_up = True
             shipper.write(f"{prefix}== {CHAIN_NAMES[action]} ==\n")
             ok, message, note = run_step(action, ctid)
             done.append(f"{CHAIN_NAMES[action]}: {message or ('ok' if ok else 'failed')}")
@@ -908,53 +993,6 @@ def update_chain(job, config, shipper):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results += list(pool.map(one, todo))
     return sorted(results, key=lambda r: r["label"])
-
-
-def normalize_id(text):
-    return re.sub(r"[^a-z0-9]+", "-", re.sub(r"\.(sh|bash|py|js|ts)$", "", (text or "").lower())).strip("-")
-
-
-def trpc(base, procedure, payload=None, timeout=60):
-    """Call a tRPC procedure of PVE Scripts Local (SuperJSON transformer): GET without input, POST with {"json": input}."""
-    url = f"{base.rstrip('/')}/api/trpc/{procedure}"
-    if payload is None:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    else:
-        req = urllib.request.Request(url, data=json.dumps({"json": payload}).encode(), method="POST",
-                                     headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)["result"]["data"]["json"]
-
-
-def downloaded_pve_slugs(base):
-    """Same selection as "Update all downloaded scripts": cards whose script is present locally."""
-    local = trpc(base, "scripts.getAllDownloadedScripts")["scripts"]
-    cards = trpc(base, "scripts.getScriptCardsWithCategories")["cards"]
-    slugs = []
-    for card in cards:
-        card_slug = (card.get("slug") or "").lower()
-        basenames = {normalize_id(b) for b in card.get("install_basenames") or []}
-        if any((s.get("slug") or "").lower() == card_slug or normalize_id(s.get("name")) in basenames
-               for s in local if s.get("name")):
-            slugs.append(card["slug"])
-    return slugs
-
-
-def update_pve_scripts(config):
-    base = (config.get("pve_scripts_local") or {}).get("url")
-    if not base:
-        return [{"label": "PVE Scripts Local", "ok": False, "message": "pve_scripts_local.url is not set in the config"}]
-    try:
-        slugs = downloaded_pve_slugs(base)
-        if not slugs:
-            return [{"label": "PVE Scripts Local", "ok": False, "message": "no downloaded script found"}]
-        data = trpc(base, "scripts.loadMultipleScripts", {"slugs": slugs}, timeout=1800)
-    except (urllib.error.URLError, KeyError, ValueError, TimeoutError) as e:
-        return [{"label": "PVE Scripts Local", "ok": False, "message": f"API unreachable or unexpected: {e}"}]
-    results = [{"label": "PVE Scripts Local", "ok": bool(data.get("success")) and not data.get("failed"),
-                "message": data.get("message") or data.get("error") or ""}]
-    results += [{"label": f["slug"], "ok": False, "message": f["error"][:200]} for f in (data.get("failed") or [])[:10]]
-    return results
 
 
 def server_call(config, method, path, body=None, timeout=15):
@@ -974,16 +1012,16 @@ def run_job(config, job):
     shipper = LogShipper(config, job["id"])
     try:
         if job["action"] == "upgrade_os":
-            results = upgrade_containers(job["ctids"], config, shipper)
+            results = upgrade_containers(job["ctids"], config, shipper, "upgrade_os" in backup_actions(job))
         elif job["action"] == "update_apps":
             results = update_apps(job, config, shipper)
         elif job["action"] == "update_docker":
             results = update_docker(job, config, shipper)
+        elif job["action"] == "upgrade_host":
+            results = upgrade_host(job, config, shipper)
+            send_host_updates(config)   # only the host changed: no need to check every container again
         elif job["action"] == "update_chain":
             results = update_chain(job, config, shipper)
-        elif job["action"] == "update_pve_scripts":
-            shipper.write("Refreshing the scripts downloaded in PVE Scripts Local…\n")
-            results = update_pve_scripts(config)
         else:
             results = [{"label": job["action"], "ok": False, "message": "unknown action"}]
     except Exception as e:  # the job must always finish on the service side
@@ -999,8 +1037,8 @@ def run_job(config, job):
 def handle_requests(config):
     """Run the job requested from the web page, if any. Returns True when a full check must follow.
 
-    The service asks for that check itself (a refresh request) when the job changes the containers, i.e. after a
-    system or application update; refreshing the PVE scripts leaves them untouched, so no check follows it."""
+    The service asks for that check itself (a refresh request) when it records an update, so that the page shows
+    the new state."""
     try:
         pending = server_call(config, "GET", "/api/jobs/pending", timeout=10)
     except (OSError, ValueError):  # unreachable service, dropped connection, reply that is not JSON
@@ -1016,8 +1054,6 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="print the JSON report without sending it")
     parser.add_argument("--if-requested", action="store_true",
                         help="only act if the web page requested a check or an action")
-    parser.add_argument("--probe-pve-scripts", action="store_true",
-                        help="list the scripts that \"Update all downloaded scripts\" would refresh, changing nothing")
     args = parser.parse_args()
 
     if run(["which", "pct"])[0] != 0:
@@ -1029,14 +1065,6 @@ def main():
         config = {}
         if not args.dry_run:
             sys.exit(f"Config file not found: {CONFIG_PATH}")
-
-    if args.probe_pve_scripts:
-        base = (config.get("pve_scripts_local") or {}).get("url")
-        if not base:
-            sys.exit("pve_scripts_local.url is not set in the config.")
-        slugs = downloaded_pve_slugs(base)
-        print(f"{len(slugs)} script(s) would be refreshed:", ", ".join(sorted(slugs)))
-        return
 
     if args.if_requested and not handle_requests(config):
         return
@@ -1059,6 +1087,7 @@ def main():
         "backup_storage": config.get("backup_storage") or None,
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "containers": containers,
+        "host_updates": {**host_updates(), "allowed": bool(config.get("allow_host_upgrade", True))},
     }
 
     if args.dry_run:

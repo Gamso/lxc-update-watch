@@ -37,13 +37,18 @@
     }).catch(function (e) { msg.textContent = e.message; });
   }
 
-  var pve = document.getElementById('act-pve');
-  if (pve) pve.addEventListener('click', function () { act('update_pve_scripts'); });
   var backup = document.getElementById('opt-backup');
   if (backup) {  // the choice is remembered by this browser
     try { var savedBackup = localStorage.getItem('lxcw_backup'); if (savedBackup !== null) backup.checked = savedBackup === '1'; } catch (e) {}
     backup.addEventListener('change', function () {
       try { localStorage.setItem('lxcw_backup', backup.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
+  var backupSystem = document.getElementById('opt-backup-system');
+  if (backupSystem) {  // off unless it was ticked in this browser
+    try { backupSystem.checked = localStorage.getItem('lxcw_backup_system') === '1'; } catch (e) {}
+    backupSystem.addEventListener('change', function () {
+      try { localStorage.setItem('lxcw_backup_system', backupSystem.checked ? '1' : '0'); } catch (e) {}
     });
   }
   var cleanup = document.getElementById('opt-cleanup');
@@ -53,6 +58,14 @@
       try { localStorage.setItem('lxcw_cleanup', cleanup.checked ? '1' : '0'); } catch (e) {}
     });
   }
+  var dismiss = document.getElementById('job-dismiss');
+  if (dismiss) dismiss.addEventListener('click', function () {
+    fetch('/api/jobs/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function (r) { if (!r.ok) throw new Error(I18N.request_refused); location.reload(); })
+      .catch(function (e) { msg.textContent = e.message; });
+  });
+  var hostUpgrade = document.getElementById('act-host');
+  if (hostUpgrade) hostUpgrade.addEventListener('click', function () { act('upgrade_host'); });
   var picker = document.getElementById('act-picker'), run = document.getElementById('act-run');
   if (picker && run) {
     var boxes = [].slice.call(picker.querySelectorAll('input[type=checkbox]')), summary = document.getElementById('act-summary');
@@ -70,9 +83,10 @@
       if (!list.length) return;
       picker.open = false;
       var values = list.map(function (b) { return b.value; });
-      var withBackup = !!(backup && backup.checked) && values.some(function (v) { return v !== 'upgrade_os'; });
+      var backupApps = !!(backup && backup.checked) && values.some(function (v) { return v !== 'upgrade_os'; });
+      var backupOs = !!(backupSystem && backupSystem.checked) && values.indexOf('upgrade_os') >= 0;
       var withCleanup = !!(cleanup && cleanup.checked) && values.indexOf('update_docker') >= 0;
-      act(values.length === 1 ? values[0] : values, { backup: withBackup, cleanup: withCleanup });
+      act(values.length === 1 ? values[0] : values, { backup_apps: backupApps, backup_system: backupOs, cleanup: withCleanup });
     });
     refreshPicker();
   }
