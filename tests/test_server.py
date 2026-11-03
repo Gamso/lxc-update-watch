@@ -500,6 +500,47 @@ def test_the_version_header_is_only_trusted_from_the_collector(web, sample_repor
     assert not web_app.COLLECTOR_FILE.exists()
 
 
+# ---------------------------------------------------------------- clearing the last job
+
+def finished_job(web, token_headers, results):
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/log", json={"text": "output\n"}, headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": results}, headers=token_headers)
+    return job
+
+
+def test_many_successes_are_folded_and_failures_stay_visible(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    finished_job(web, token_headers, [{"label": f"CT {n}", "ok": True, "message": "done"} for n in range(5)]
+                 + [{"label": "CT 9", "ok": False, "message": "boom"}])
+    page = web.get("/").get_data(as_text=True)
+    assert "5 succeeded" in page and 'class="res ko">\u2717 CT 9 : boom' in page
+    assert page.index("CT 9 : boom") < page.index("5 succeeded")
+    assert 'id="job-dismiss"' in page and "Clear" in page
+
+
+def test_a_few_successes_are_listed_as_they_are(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    finished_job(web, token_headers, [{"label": "CT 1", "ok": True, "message": "done"}])
+    assert "succeeded" not in web.get("/").get_data(as_text=True)
+
+
+def test_the_last_job_can_be_cleared_once_it_is_over(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    assert web.post("/api/jobs/dismiss", json={}).status_code == 409           # still pending
+    assert 'id="job-dismiss"' not in web.get("/").get_data(as_text=True)
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/result", json={"results": []}, headers=token_headers)
+    assert web.post("/api/jobs/dismiss", data="x=1").status_code == 400         # a form cannot clear it
+    assert web.post("/api/jobs/dismiss", json={}).status_code == 200
+    page = web.get("/").get_data(as_text=True)
+    assert 'class="job"' not in page and web.get("/api/status").get_json()["job"] is None
+    assert web.post("/api/jobs/dismiss", json={}).status_code == 200            # nothing left: still fine
+    assert web.post("/api/actions", json={"action": "upgrade_os"}).status_code == 202   # and a new one can start
+
+
 # ---------------------------------------------------------------- the two backup options
 
 def complete_job(web, token_headers, job):

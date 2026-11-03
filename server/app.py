@@ -602,6 +602,18 @@ def api_actions():
     return jsonify(job), 202
 
 
+@app.post("/api/jobs/dismiss")
+def api_job_dismiss():
+    """Clear the card of the last job (its results and its console output) once it is over."""
+    if not isinstance(request.get_json(silent=True), dict):   # JSON only, like the actions: a form cannot send it
+        api_error(400, "unknown_action", "unknown action")
+    if job_is_active(load_job()):
+        api_error(409, "job_running", "a job is already running")
+    JOB_FILE.unlink(missing_ok=True)
+    LOG_FILE.unlink(missing_ok=True)
+    return jsonify(ok=True)
+
+
 @app.get("/api/jobs/pending")
 def api_jobs_pending():
     require_token()

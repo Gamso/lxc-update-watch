@@ -189,6 +189,8 @@ notes below).
   during the upgrade, so the page of Proxmox may blink. The package lists are the ones Proxmox refreshes itself every
   day; this project never runs `apt-get update`. Set `allow_host_upgrade` to `false` in the collector config to remove
   the button. Once it is done, only the host's list is read again (the containers are not checked again).
+- **Last job card.** The results of the last job stay on the page, with its console. *Clear* (once the job is over)
+  removes them; more than three successes are folded into one line, failures always stay visible.
 - **Several at once.** The ticked updates form one job. The containers run in parallel (as many as the smallest of
   the workers settings of the ticked updates), but each container goes through the steps one after the other, always
   in this order: system, applications, Docker stacks. A container is backed up once, right before its first step

@@ -59,12 +59,17 @@
 {% if view.job %}
 {% set j = view.job %}
 <div class="job">
-<p><strong>{{ view.job_title }}</strong> ·
+<div class="job-head"><p><strong>{{ view.job_title }}</strong> ·
 {% if j.status == 'pending' %}{{ t('job_pending') }}
 {% elif j.status == 'running' %}{{ t('job_running') }}
 {% elif j.ok %}{{ t('job_done_ok') }}
 {% else %}{{ t('job_done_errors') }}{% endif %}</p>
-{% for r in j.results %}<p class="res {{ 'ok' if r.ok else 'ko' }}">{{ '✓' if r.ok else '✗' }} {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}
+{% if not view.job_active %}<button id="job-dismiss" type="button">{{ t('btn_dismiss') }}</button>{% endif %}</div>
+{% set passed = j.results|selectattr('ok')|list %}
+{% for r in j.results if not r.ok %}<p class="res ko">✗ {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}
+{% if passed|length > 3 %}<details class="res-ok"><summary class="res">✓ {{ t('res_ok_n', n=passed|length) }}</summary>
+{% for r in passed %}<p class="res ok">✓ {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}</details>
+{% else %}{% for r in passed %}<p class="res ok">✓ {{ r.label }}{% if r.message %} : {{ r.message }}{% endif %}</p>{% endfor %}{% endif %}
 <details id="console-box"{% if view.job_active %} open{% endif %}><summary>{{ t('console') }}</summary>
 {% if view.job_containers %}<div id="console-tabs" class="tabs" role="tablist">
 <button type="button" role="tab" class="on" aria-selected="true" data-ct="">{{ t('tab_all') }}</button>

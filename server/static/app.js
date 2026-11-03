@@ -58,6 +58,12 @@
       try { localStorage.setItem('lxcw_cleanup', cleanup.checked ? '1' : '0'); } catch (e) {}
     });
   }
+  var dismiss = document.getElementById('job-dismiss');
+  if (dismiss) dismiss.addEventListener('click', function () {
+    fetch('/api/jobs/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function (r) { if (!r.ok) throw new Error(I18N.request_refused); location.reload(); })
+      .catch(function (e) { msg.textContent = e.message; });
+  });
   var hostUpgrade = document.getElementById('act-host');
   if (hostUpgrade) hostUpgrade.addEventListener('click', function () { act('upgrade_host'); });
   var picker = document.getElementById('act-picker'), run = document.getElementById('act-run');
