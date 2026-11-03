@@ -4,6 +4,8 @@ A small web page that shows which of your Proxmox LXC containers have **system u
 updates** (community-scripts helper scripts, add-ons, GitHub releases, apt packages) and **Docker image updates**,
 and can apply them from the page, with a live console and an optional backup first.
 
+![The page: Proxmox host updates and the containers to update](docs/screenshot.png)
+
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
 - Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
