@@ -42,6 +42,8 @@ PVE_SCRIPT_URL = "https://raw.githubusercontent.com/community-scripts/{repo}/mai
 
 
 def read_version():
+    # Same function as in server/app.py, on purpose: the collector is deployed alone on the Proxmox host (standard
+    # library only, no import from server/), and both read the VERSION file deployed next to them.
     try:
         return (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
     except OSError:
@@ -1266,16 +1268,11 @@ def main():
     if args.dry_run:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return
-    req = urllib.request.Request(
-        config["server_url"].rstrip("/") + "/api/report",
-        data=json.dumps(report).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30, context=server_tls(config)) as resp:
-            print(f"Report sent ({resp.status}): {len(containers)} container(s).")
-    except urllib.error.URLError as e:
+        server_call(config, "POST", "/api/report", report, timeout=30)
+    except (OSError, ValueError) as e:   # unreachable, refused (HTTPError is an OSError), or a reply that is not JSON
         sys.exit(f"Could not send the report: {e}")
+    print(f"Report sent: {len(containers)} container(s).")
 
 
 if __name__ == "__main__":

@@ -611,6 +611,41 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
 
 
+# ---------------------------------------------------------------- the report
+
+def test_the_report_is_sent_like_every_other_request(monkeypatch, tmp_path, capsys):
+    config = tmp_path / "config.json"
+    config.write_text('{"server_url": "http://x", "token": "t"}', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(c, "CONFIG_PATH", str(config))
+    monkeypatch.setattr(c, "run", lambda cmd, timeout=120: (0, ""))           # pct found, no container
+    monkeypatch.setattr(c, "list_containers", lambda: [])
+    monkeypatch.setattr(c, "host_updates", lambda: {"count": 0, "packages": [], "kernel": False})
+    monkeypatch.setattr(c, "ProgressReporter", lambda config, run_id: type("P", (), {
+        "event": lambda self, **f: None, "close": lambda self: None})())
+    monkeypatch.setattr(c, "server_call", lambda config, method, path, body=None, timeout=15: calls.append(path) or {})
+    monkeypatch.setattr(c.sys, "argv", ["lxc_collect.py"])
+    c.main()
+    assert calls == ["/api/report"] and "Report sent: 0 container(s)." in capsys.readouterr().out
+
+
+def test_a_report_that_cannot_be_sent_ends_with_an_error(monkeypatch, tmp_path):
+    config = tmp_path / "config.json"
+    config.write_text('{"server_url": "http://x", "token": "t"}', encoding="utf-8")
+    monkeypatch.setattr(c, "CONFIG_PATH", str(config))
+    monkeypatch.setattr(c, "run", lambda cmd, timeout=120: (0, ""))
+    monkeypatch.setattr(c, "list_containers", lambda: [])
+    monkeypatch.setattr(c, "host_updates", lambda: {"count": 0, "packages": [], "kernel": False})
+    monkeypatch.setattr(c, "ProgressReporter", lambda config, run_id: type("P", (), {
+        "event": lambda self, **f: None, "close": lambda self: None})())
+
+    def refused(*a, **k):
+        raise c.urllib.error.HTTPError("http://x/api/report", 401, "invalid token", {}, None)
+
+    monkeypatch.setattr(c, "server_call", refused)
+    monkeypatch.setattr(c.sys, "argv", ["lxc_collect.py"])
+    with pytest.raises(SystemExit, match="Could not send the report"):
+        c.main()
 # ---------------------------------------------------------------- values put into container shell commands
 
 @pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("id") is None,
