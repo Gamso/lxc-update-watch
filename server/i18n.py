@@ -228,7 +228,7 @@ STRINGS = {
 
 # Strings handed to the browser for the page's JavaScript.
 JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "step_queued", "step_system",
-           "step_app", "step_docker", "live_progress")
+           "step_app", "step_docker", "live_progress", "date_fmt")
 
 
 def pick_language(cookie_value, accept_languages):
