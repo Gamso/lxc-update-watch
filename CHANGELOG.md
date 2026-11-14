@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+
+### Added
+- `server_ca_file` collector option: the PEM certificate (or private CA) of an `https` `server_url`, so the token and
+  the reports can be encrypted with a self-signed certificate. The daily check prints a note while `server_url` is not
+  `https`; the README explains how to serve the page over HTTPS.
+- `scripts_ref` and `update_apps_sha256` collector options: pin the official `update-apps.sh` to a branch, tag or
+  commit, and refuse any other content. The console of every application update shows the version and SHA-256 of the
+  script it runs.
+- "GitHub rate limit reached (set github_token)" instead of "version unavailable" when the GitHub API quota is spent.
+- "Check failed" badge for a container the collector could not check at all.
+- *Check now* before the first report, and the page reloads itself when the report arrives.
+- CI runs ruff and checks the JavaScript syntax; Dependabot proposes the dependency updates.
+
+### Changed
+- The host upgrade runs `apt-get update` first (a failing repository is reported but does not stop it), then checks
+  again for a new kernel.
+- The time limits of the system upgrade, the Docker stacks, the image cleanup and the checks are enforced inside the
+  containers (`timeout`), not only by killing `pct exec` on the host.
+- A job is considered stuck after 3 hours without any activity (console output), no longer 3 hours after it was
+  requested.
+- The latest GitHub releases are cached on disk for 15 minutes, like the helper scripts' releases.
+- The time of the last check is shown in the browser's time zone.
+- The service dependencies are pinned to exact versions (Flask 3.1.3, gunicorn 27.0.1, Authlib 1.9.5,
+  requests 2.34.2).
+- The report goes through the same code as every other request to the service, with the collector version header.
+
+### Fixed
+- A container whose package lists could not be refreshed (mirror down, timeout) was shown as up to date; it is now
+  "unknown".
+- A job whose result was lost (network error, collector killed) blocked new actions for 3 hours: the result is retried
+  for about two minutes, and the next poll of the collector closes an abandoned job as "interrupted".
+- An error in one container stopped the whole check (no report sent) or lost the results of a whole job; it now only
+  marks that container as failed.
+- Version comparison: `1.2` and `1.2.0` are the same version, and `2.0.0` is newer than `2.0.0-rc1`. An installed
+  version newer than the one a helper script would install is no longer shown as an update.
+- A Docker container whose tag was pulled again but not recreated was reported as "registry unreachable" instead of
+  "update available".
+- Console output that could not be sent to the service grew without limit in the collector.
+- Simultaneous requests could overwrite each other's changes to the state files (with more than one gunicorn worker
+  or thread); they are now serialized.
+
+### Security
+- The page can no longer be shown in another site's frame (clickjacking): `X-Frame-Options`, `frame-ancestors`,
+  `nosniff` and `Referrer-Policy` headers.
+- `/api/refresh` requires a JSON body, like the other actions, so a form on another site cannot start a check.
+- Names read from the downloaded helper scripts, `version_file` and `apt_package` are quoted in the shell commands run
+  in the containers.
+
 ## [0.4.0] - 2026-11-03
 
 ### Added
@@ -109,7 +158,8 @@ First public release.
 - Project versioning (`VERSION`, changelog, versions shown in the page footer, in the report and by `deploy.ps1`)
   and an automated test suite.
 
-[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.2.0...v0.3.0
