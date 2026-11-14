@@ -702,6 +702,23 @@ def test_an_exception_in_one_container_keeps_the_results_of_the_others():
     results = c.map_containers(work, [(1, "a"), (2, "b"), (3, "c")], 2, shipper)
     assert [r["ok"] for r in results] == [True, False, True]
     assert results[1]["message"] == "internal error: boom" and "[CT 2]" in shipper.text and "finished: failed" in shipper.text
+# ---------------------------------------------------------------- time limits inside the containers
+
+def test_commands_in_a_container_carry_their_own_time_limit():
+    cmd = c.in_container(101, ["docker", "image", "prune", "-f"], 900)
+    assert cmd[:7] == ["pct", "exec", "101", "--", "sh", "-c", c.TIMEOUT_GUARD]
+    assert cmd[7:] == ["900", "docker", "image", "prune", "-f"]
+
+
+@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("timeout") is None,
+                    reason="needs a POSIX shell with timeout")
+def test_the_timeout_guard_stops_the_command_and_keeps_exit_codes():
+    import subprocess
+    guard = ["sh", "-c", c.TIMEOUT_GUARD]
+    assert subprocess.run(guard + ["1", "sh", "-c", "sleep 5"]).returncode == 124
+    assert subprocess.run(guard + ["5", "sh", "-c", "exit 3"]).returncode == 3
+    out = subprocess.run(guard + ["5", "sh", "-c", "echo \"$1\"", "sh", "a b"], capture_output=True, text=True)
+    assert out.stdout == "a b\n"
 # ---------------------------------------------------------------- GitHub API
 
 class FakeResponse:
