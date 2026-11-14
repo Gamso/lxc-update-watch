@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-14
+
 ### Added
 - A Docker image with a versioned tag is compared with the registry's tags of the same shape: a new version published
   under a new tag (`ghcr.io/o/app:1.2.1` → `1.2.2`) is now reported. Containers of a helper script are left out, since
@@ -165,7 +167,8 @@ First public release.
 - Project versioning (`VERSION`, changelog, versions shown in the page footer, in the report and by `deploy.ps1`)
   and an automated test suite.
 
-[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.0...v0.3.1
