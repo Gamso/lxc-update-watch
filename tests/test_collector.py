@@ -543,6 +543,34 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
         def read(self, *args):
             return b"{}"
 
-    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None, context=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
+
+
+# ---------------------------------------------------------------- TLS to the web service
+
+def test_the_service_certificate_can_come_from_a_private_ca(monkeypatch):
+    seen = []
+    monkeypatch.setattr(c.ssl, "create_default_context", lambda cafile=None: seen.append(cafile) or "ctx")
+    assert c.server_tls({"server_url": "https://lxc.lan"}) is None          # public CA: the default context
+    assert c.server_tls({"server_ca_file": "/etc/lxcw-ca.pem"}) == "ctx" and seen == ["/etc/lxcw-ca.pem"]
+
+
+def test_server_calls_use_the_tls_context(monkeypatch):
+    contexts = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, *args):
+            return b"{}"
+
+    monkeypatch.setattr(c, "server_tls", lambda config: "ctx")
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None, context=None: contexts.append(context) or Reply())
+    c.server_call({"server_url": "https://x", "token": "t"}, "GET", "/api/jobs/pending")
+    assert contexts == ["ctx"]

@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -995,6 +996,13 @@ def update_chain(job, config, shipper):
     return sorted(results, key=lambda r: r["label"])
 
 
+def server_tls(config):
+    """TLS context for an https server_url: the system's CAs, or `server_ca_file` (a self-signed certificate or a
+    private CA, in PEM). None for http, where nothing is encrypted and the token travels in clear text."""
+    ca_file = config.get("server_ca_file")
+    return ssl.create_default_context(cafile=ca_file) if ca_file else None
+
+
 def server_call(config, method, path, body=None, timeout=15):
     req = urllib.request.Request(
         config["server_url"].rstrip("/") + path,
@@ -1003,7 +1011,7 @@ def server_call(config, method, path, body=None, timeout=15):
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}",
                  "X-Collector-Version": VERSION},  # lets the page tell which collector is installed right now
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=server_tls(config)) as resp:
         return json.load(resp)
 
 
@@ -1065,6 +1073,10 @@ def main():
         config = {}
         if not args.dry_run:
             sys.exit(f"Config file not found: {CONFIG_PATH}")
+    if not args.dry_run and not args.if_requested and not config.get("server_url", "").startswith("https://"):
+        # Once a day (the full check), not every minute: the poll would fill the journal.
+        print("Note: server_url is not https, the token and the reports travel in clear text "
+              "(see 'Encrypting the traffic' in the README).", file=sys.stderr)
 
     if args.if_requested and not handle_requests(config):
         return
@@ -1099,7 +1111,7 @@ def main():
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=server_tls(config)) as resp:
             print(f"Report sent ({resp.status}): {len(containers)} container(s).")
     except urllib.error.URLError as e:
         sys.exit(f"Could not send the report: {e}")
