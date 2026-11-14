@@ -188,8 +188,11 @@ notes below).
   then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
   and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
   applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
-  A version published under a new tag (`1.2.1 → 1.2.2`) is not pulled by this button: change the tag in the compose
-  file first, then run `docker compose up -d` (the details of the row say so).
+  A version published under a new tag (`1.2.1 → 1.2.2`) is installed too: before pulling, the newest tag of the **same
+  major version** is written on the `image:` lines of the compose files (a copy of each file is kept as
+  `<file>.lxc-update-watch.bak`, and put back if the pull or the restart fails). A new major version (`1.x → 2.0`,
+  `postgres:16 → 17`) is only shown: change the tag by hand. So is an image whose tag comes from a variable
+  (`${TAG}`), and every image of a helper script's container, whose `update` command decides the version.
 - **Upgrade the host** (button of the *Proxmox host* section) runs `apt-get dist-upgrade` on the node, non-interactive
   and keeping your configuration files (`--force-confold`), with the output in the console. It is refused when the
   list contains a Proxmox or PVE kernel, because the node must then be rebooted and that is better watched from the

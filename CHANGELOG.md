@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- *Update Docker stacks* installs a version published under a new tag (`1.2.1 → 1.2.2`): it writes the newest tag of
+  the same major version in the compose files (a `.lxc-update-watch.bak` copy is kept, and put back if the pull or the
+  restart fails), then pulls and recreates the stack. A new major version is still left to the user, and containers of
+  a helper script are not touched.
+
 ## [0.6.0] - 2026-11-14
 
 ### Added
