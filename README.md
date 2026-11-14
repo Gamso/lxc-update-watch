@@ -280,6 +280,11 @@ Release process:
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest
+python -m ruff check .
+node --check server/static/app.js
 ```
+
+CI runs the same three checks. The dependencies are pinned to exact versions (`server/requirements.txt`), and
+Dependabot proposes their updates every week.
 
 The tests need no network and no Proxmox: the collector's `pct` calls and the GitHub requests are replaced by fakes.

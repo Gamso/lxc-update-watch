@@ -475,7 +475,7 @@ def test_chain_stops_a_container_at_its_first_failure(monkeypatch):
 
 
 def test_a_failure_in_one_container_does_not_stop_the_others(monkeypatch):
-    commands = chain_env(monkeypatch)
+    chain_env(monkeypatch)
     real = c.stream_process
 
     def selective(cmd, prefix, shipper, timeout, env=None):
@@ -500,7 +500,7 @@ def test_chain_needs_the_backup_storage_and_skips_stopped_containers(monkeypatch
 
 
 def test_chain_apps_step_uses_the_official_script_without_its_own_backup(monkeypatch):
-    commands = chain_env(monkeypatch)
+    chain_env(monkeypatch)
     seen = []
     real = c.stream_process
 
