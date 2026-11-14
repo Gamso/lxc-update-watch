@@ -101,6 +101,7 @@ STRINGS = {
         "err.latest_version_unavailable": "latest version unavailable",
         "err.package_not_installed": "package not installed",
         "err.target_version_unavailable": "target version unavailable",
+        "err.github_rate_limited": "GitHub rate limit reached (set github_token)",
         "err.pinned_by_digest": "image pinned by digest",
         "err.local_digest_not_found": "local digest not found",
         "err.registry_unreachable": "registry unreachable or private",
@@ -210,6 +211,7 @@ STRINGS = {
         "err.latest_version_unavailable": "dernière version indisponible",
         "err.package_not_installed": "paquet non installé",
         "err.target_version_unavailable": "version cible indisponible",
+        "err.github_rate_limited": "limite de l'API GitHub atteinte (renseignez github_token)",
         "err.pinned_by_digest": "image épinglée par digest",
         "err.local_digest_not_found": "digest local introuvable",
         "err.registry_unreachable": "registre injoignable ou privé",
@@ -228,7 +230,7 @@ STRINGS = {
 
 # Strings handed to the browser for the page's JavaScript.
 JS_KEYS = ("checking", "check_starts", "request_failed", "request_refused", "step_queued", "step_system",
-           "step_app", "step_docker", "live_progress")
+           "step_app", "step_docker", "live_progress", "date_fmt")
 
 
 def pick_language(cookie_value, accept_languages):
