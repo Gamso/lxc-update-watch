@@ -3,6 +3,17 @@
   function fmt(template, values) {
     return template.replace(/\{(\w+)\}/g, function (_, key) { return key in values ? values[key] : '{' + key + '}'; });
   }
+  // Dates are written by the server in its own time zone: show them in the browser's, with the same format.
+  function localDate(iso) {
+    var d = new Date(iso), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    if (isNaN(d)) return null;
+    var parts = { Y: d.getFullYear(), m: pad(d.getMonth() + 1), d: pad(d.getDate()), H: pad(d.getHours()), M: pad(d.getMinutes()) };
+    return I18N.date_fmt.replace(/%([YmdHM])/g, function (_, k) { return parts[k]; });
+  }
+  [].forEach.call(document.querySelectorAll('time[datetime]'), function (node) {
+    var text = localDate(node.getAttribute('datetime'));
+    if (text) node.textContent = text;
+  });
   var btn = document.getElementById('refresh'), sub = document.getElementById('sub');
   var lastCheck = CFG.lastCheck, timer = null;
   var jobId = CFG.jobId, jobStatus = CFG.jobStatus;
