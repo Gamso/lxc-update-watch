@@ -149,17 +149,16 @@ def strip_v(version):
 
 
 def latest_github_release(repo, token, cache, prefix=None):
-    """Tag of the latest release; with `prefix`, the newest one whose version starts with that prefix."""
+    """Tag of the latest release; with `prefix`, the newest one whose version starts with that prefix.
+
+    Read through the disk cache, like the helper scripts' releases: every check would otherwise cost one GitHub API
+    request per application, and 60 per hour is all there is without a token."""
     key = f"{repo}@{prefix}" if prefix else repo
     if key in cache:
         return cache[key]
     url = f"https://api.github.com/repos/{repo}/releases" + ("?per_page=100" if prefix else "/latest")
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT})
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.load(resp)
+        data = json.loads(cached_fetch(url, RELEASE_TTL, token) or "null")
         if prefix:
             candidates = [
                 r["tag_name"] for r in data
@@ -169,9 +168,24 @@ def latest_github_release(repo, token, cache, prefix=None):
             cache[key] = max(candidates, key=lambda t: version_key(parse_version(t)), default=None)
         else:
             cache[key] = data["tag_name"]
-    except (urllib.error.URLError, KeyError, ValueError, TimeoutError):
+    except (KeyError, ValueError, TypeError):
         cache[key] = None
     return cache[key]
+
+
+RELEASE_TTL = 900
+# Set once GitHub refused a request because the hourly quota is spent: the versions it could not give are then
+# reported as such, so that the page says why instead of a vague "unavailable".
+GITHUB_RATE_LIMITED = threading.Event()
+
+
+def is_rate_limited(error):
+    return error.code == 429 or (error.code == 403 and error.headers.get("X-RateLimit-Remaining") == "0")
+
+
+def unavailable(code):
+    """Error code of a version GitHub did not give: the rate limit when that is the reason, else `code`."""
+    return "github_rate_limited" if GITHUB_RATE_LIMITED.is_set() else code
 
 
 def cached_fetch(url, ttl, token=None):
@@ -189,7 +203,9 @@ def cached_fetch(url, ttl, token=None):
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as resp:
             text = resp.read().decode("utf-8", "replace")
-    except (urllib.error.URLError, TimeoutError):
+    except (urllib.error.URLError, TimeoutError) as e:
+        if isinstance(e, urllib.error.HTTPError) and "api.github.com" in url and is_rate_limited(e):
+            GITHUB_RATE_LIMITED.set()
         try:
             with open(path, encoding="utf-8") as f:  # on failure, a stale copy beats nothing
                 return f.read()
@@ -254,7 +270,7 @@ def app_status(ctid, app_cfg, github_token, cache):
         source = "GitHub"
     latest = parse_version(tag, app_cfg.get("version_regex")) if tag else None
     if not latest:
-        return {"name": name, "installed": installed, "error": "latest_version_unavailable"}
+        return {"name": name, "installed": installed, "error": unavailable("latest_version_unavailable")}
     a, b = version_key(installed), version_key(latest)
     update = b > a if a and b else installed != latest
     result = {"name": name, "installed": installed, "latest": latest, "update": update, "source": source}
@@ -433,14 +449,14 @@ def release_target(comp, token):
         return comp["pin"]
     api = f"https://api.github.com/repos/{comp['repo']}/releases"
     if comp["prefix"]:
-        text = cached_fetch(api + "?per_page=100", 900, token)
+        text = cached_fetch(api + "?per_page=100", RELEASE_TTL, token)
         try:
             tags = [r["tag_name"] for r in json.loads(text or "[]") if not r["draft"] and not r["prerelease"]
                     and r["tag_name"].startswith(comp["prefix"])]
         except (ValueError, KeyError, TypeError):
             return None
         return tags[0] if tags else None
-    text = cached_fetch(api + "/latest", 900, token)
+    text = cached_fetch(api + "/latest", RELEASE_TTL, token)
     try:
         return json.loads(text or "{}").get("tag_name")
     except ValueError:
@@ -468,7 +484,7 @@ def auto_app_status(ctid, name, config, cache):
             target = strip_v(tag) if tag else None
             found.append({"name": comp["name"], "installed": current, "latest": target,
                           "update": bool(target) and current != target,
-                          "error": None if target else "target_version_unavailable"})
+                          "error": None if target else unavailable("target_version_unavailable")})
         if not found:
             continue  # the host name looks like this script but nothing from it is installed here
         main = next((c for c in found if c["update"]), found[0])
