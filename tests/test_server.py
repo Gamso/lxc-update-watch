@@ -24,6 +24,14 @@ def test_page_without_report(web):
     assert "No report received yet" in web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
 
 
+def test_the_first_check_can_be_asked_from_the_page(web):
+    page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert 'id="refresh"' in page and "Check now" in page and "app.js" in page
+    assert '"lastCheck": null' in page and '"refreshing": false' in page
+    assert web.post("/api/refresh").status_code == 202
+    assert '"refreshing": true' in web.get("/").get_data(as_text=True)   # the page keeps waiting after a reload
+
+
 def test_report_is_stored_and_served(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     assert web.get("/api/state").get_json()["host"] == "pve"
@@ -150,7 +158,6 @@ def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
     assert pending["id"] == job["id"]
     assert web.post(f"/api/jobs/{job['id']}/start", headers=token_headers).status_code == 200
-    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"] is None  # already started
 
     log_url = f"/api/jobs/{job['id']}/log"
     web.post(log_url, json={"text": "[CT 100] \x1b[32m[OK]\x1b[0m start\n"}, headers=token_headers)
@@ -166,6 +173,27 @@ def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     assert "Application update (with backup)" in page and "finished with errors" in page and "boom" in page
     assert web.get("/api/status").get_json()["job"] == "done"
     assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
+
+
+def test_a_job_abandoned_by_the_collector_is_closed_at_its_next_poll(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    web.get("/api/jobs/pending", headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 409
+    # The collector was killed: the result never came. Its next poll means nothing is running any more.
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"] is None
+    status = web.get("/api/status").get_json()
+    assert status["job"] == "done" and status["job_id"] == job["id"]
+    assert "interrupted" in web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
+
+
+def test_a_pending_job_is_left_alone_by_the_poll(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    for _ in range(2):
+        assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]["id"] == job["id"]
 
 
 def test_log_is_capped(web, token_headers, sample_report, monkeypatch):
@@ -585,3 +613,8 @@ def test_the_page_cannot_be_framed_by_another_site(web, token_headers, sample_re
         headers = web.get(path).headers
         assert headers["X-Frame-Options"] == "DENY" and "frame-ancestors 'none'" in headers["Content-Security-Policy"]
         assert headers["X-Content-Type-Options"] == "nosniff"
+def test_the_check_time_is_marked_for_the_browser_time_zone(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert f'<time datetime="{sample_report["checked_at"]}">' in page and "last check: <time" in page
+    assert '"date_fmt": "%Y-%m-%d %H:%M"' in page    # the browser formats it like the server
