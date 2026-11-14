@@ -546,3 +546,22 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
+
+
+# ---------------------------------------------------------------- time limits inside the containers
+
+def test_commands_in_a_container_carry_their_own_time_limit():
+    cmd = c.in_container(101, ["docker", "image", "prune", "-f"], 900)
+    assert cmd[:7] == ["pct", "exec", "101", "--", "sh", "-c", c.TIMEOUT_GUARD]
+    assert cmd[7:] == ["900", "docker", "image", "prune", "-f"]
+
+
+@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("timeout") is None,
+                    reason="needs a POSIX shell with timeout")
+def test_the_timeout_guard_stops_the_command_and_keeps_exit_codes():
+    import subprocess
+    guard = ["sh", "-c", c.TIMEOUT_GUARD]
+    assert subprocess.run(guard + ["1", "sh", "-c", "sleep 5"]).returncode == 124
+    assert subprocess.run(guard + ["5", "sh", "-c", "exit 3"]).returncode == 3
+    out = subprocess.run(guard + ["5", "sh", "-c", "echo \"$1\"", "sh", "a b"], capture_output=True, text=True)
+    assert out.stdout == "a b\n"
