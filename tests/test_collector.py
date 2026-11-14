@@ -546,3 +546,61 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
+
+
+# ---------------------------------------------------------------- GitHub API
+
+class FakeResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, *args):
+        return self.body.encode()
+
+
+@pytest.fixture
+def github(tmp_path, monkeypatch):
+    """Fake GitHub: `replies` maps a URL fragment to a body or an HTTP status; `calls` lists the URLs requested."""
+    monkeypatch.setattr(c, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(c, "GITHUB_RATE_LIMITED", c.threading.Event())
+    state = {"replies": {}, "calls": []}
+
+    def urlopen(req, timeout=None):
+        state["calls"].append(req.full_url)
+        for fragment, reply in state["replies"].items():
+            if fragment in req.full_url:
+                if isinstance(reply, int):
+                    headers = {"X-RateLimit-Remaining": "0"} if reply == 403 else {}
+                    raise c.urllib.error.HTTPError(req.full_url, reply, "refused", headers, None)
+                return FakeResponse(reply)
+        raise c.urllib.error.URLError("no route")
+
+    monkeypatch.setattr(c.urllib.request, "urlopen", urlopen)
+    return state
+
+
+def test_latest_release_goes_through_the_disk_cache(github):
+    github["replies"]["owner/app/releases/latest"] = '{"tag_name": "v1.2.3"}'
+    assert c.latest_github_release("owner/app", "", {}) == "v1.2.3"
+    assert c.latest_github_release("owner/app", "", {}) == "v1.2.3"   # new run: fresh memory cache, same disk cache
+    assert len(github["calls"]) == 1
+
+
+def test_a_spent_github_quota_is_named_as_the_reason(github, monkeypatch):
+    github["replies"]["api.github.com"] = 403
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, "1.0.0"))
+    app = c.app_status("1", {"name": "App", "version_cmd": "app -v", "repo": "owner/app"}, "", {})
+    assert app["error"] == "github_rate_limited"
+
+
+def test_other_github_failures_keep_the_generic_error(github, monkeypatch):
+    github["replies"]["api.github.com"] = 404
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, "1.0.0"))
+    app = c.app_status("1", {"name": "App", "version_cmd": "app -v", "repo": "owner/app"}, "", {})
+    assert app["error"] == "latest_version_unavailable"
