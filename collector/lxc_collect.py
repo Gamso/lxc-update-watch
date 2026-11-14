@@ -464,23 +464,29 @@ def registry_tags(registry, repo, auth, cache):
 VERSION_TAG = re.compile(r"^([A-Za-z_-]*?)(\d+(?:\.\d+)*)(.*)$")
 
 
-def newer_tag(tag, tags):
+def newer_tag(tag, tags, same_major=False):
     """Highest tag of the same shape as `tag` and newer than it: '1.2.1' -> '1.2.2' (same prefix such as 'v', same
-    number of components, same suffix such as '-alpine'); None for a mobile tag such as 'latest'."""
+    number of components, same suffix such as '-alpine'); None for a mobile tag such as 'latest'.
+
+    same_major keeps the first number ('1.2.1' -> '1.3.0', never '2.0.0'), and needs at least two numbers: a tag
+    such as '16-alpine' only moves to a new major version."""
     match = VERSION_TAG.match(tag)
     if not match:
         return None
     prefix, numbers, suffix = match.groups()
-    best, best_key = None, tuple(int(n) for n in numbers.split("."))
+    current = tuple(int(n) for n in numbers.split("."))
+    if same_major and len(current) < 2:
+        return None
+    best, best_key = None, current
     for candidate in tags or []:
         m = VERSION_TAG.match(candidate)
         if not m or m.group(1) != prefix or m.group(3) != suffix:
             continue
         parts = m.group(2).split(".")
-        if len(parts) != len(best_key) or any(len(p) > 1 and p.startswith("0") for p in parts):
+        if len(parts) != len(current) or any(len(p) > 1 and p.startswith("0") for p in parts):
             continue
         key = tuple(int(n) for n in parts)
-        if key > best_key:
+        if key > best_key and not (same_major and key[0] != current[0]):
             best, best_key = candidate, key
     return best
 
@@ -521,9 +527,13 @@ def docker_status(ctid, auth, cache, new_tags=True):
             else:
                 entry["update"] = local != remote
             if new_tags and VERSION_TAG.match(tag):
-                latest = newer_tag(tag, registry_tags(registry, repo, auth, cache))
+                tags = registry_tags(registry, repo, auth, cache)
+                latest = newer_tag(tag, tags)
                 if latest:
                     entry["latest_tag"] = latest
+                    target = newer_tag(tag, tags, same_major=True)
+                    if target:
+                        entry["update_tag"] = target   # what Update Docker stacks moves it to
         images.append(entry)
     return images
 
@@ -1007,22 +1017,65 @@ def parse_docker_inventory(text):
         project, workdir, files, name, image = parts
         name = name.lstrip("/")
         if project and files:
-            stacks.setdefault((project, workdir, files), []).append(name)
+            stack = stacks.setdefault((project, workdir, files), {"containers": [], "images": []})
+            stack["containers"].append(name)
+            if image not in stack["images"]:
+                stack["images"].append(image)
         else:
             unmanaged.append(f"{name} ({image})")
-    return ([{"project": key[0], "workdir": key[1], "files": key[2], "containers": names}
-             for key, names in stacks.items()], unmanaged)
+    return ([{"project": key[0], "workdir": key[1], "files": key[2], **stack}
+             for key, stack in stacks.items()], unmanaged)
 
 
-def compose_script(stack):
-    """Shell script run inside the LXC: check the files, download the new images, recreate what changed."""
+IMAGE_REF = re.compile(r"^[A-Za-z0-9._/:-]+$")   # an image reference safe to put in a sed expression
+BACKUP_SUFFIX = ".lxc-update-watch.bak"
+
+
+def tag_bumps(images, auth, cache):
+    """(running image, image with the newest tag of the same major version) of the images of a stack that have one."""
+    bumps = []
+    for image in images:
+        parsed = parse_image(image) if IMAGE_REF.match(image) else None
+        if not parsed or not VERSION_TAG.match(parsed[2]):
+            continue
+        registry, repo, tag, name = parsed
+        target = newer_tag(tag, registry_tags(registry, repo, auth, cache), same_major=True)
+        if target:
+            bumps.append((image, f"{name}:{target}"))
+    return bumps
+
+
+def bump_script(files, bumps):
+    """Shell lines that write the new tags in the compose files (`image: <old>` lines only), after a copy of each."""
+    if not bumps:
+        return ""
+    quoted = " ".join(shlex.quote(f) for f in files)
+    lines = "".join(f"cp -p {shlex.quote(f)} {shlex.quote(f + BACKUP_SUFFIX)} || exit 4\n" for f in files)
+    for old, new in bumps:
+        ere = old.replace(".", "\\.")
+        find = f"^[[:space:]]*image:[[:space:]]*[\"']?{ere}[\"']?([[:space:]]|$)"
+        replace = f"s|^([[:space:]]*image:[[:space:]]*[\"']?){ere}([\"']?([[:space:]].*)?)$|\\1{new}\\2|"
+        lines += (f"if grep -Eq {shlex.quote(find)} {quoted}; then sed -E -i {shlex.quote(replace)} {quoted} && "
+                  f"echo {shlex.quote(f'tag: {old} -> {new}')}; "
+                  f"else echo {shlex.quote(f'{old}: not written as is in the compose files, change its tag by hand')}"
+                  f"; fi\n")
+    return lines
+
+
+def compose_script(stack, bumps=()):
+    """Shell script run inside the LXC: check the files, write the newer tags if any, download the new images,
+    recreate what changed. If that fails, the compose files are put back as they were."""
     files = [f for f in stack["files"].split(",") if f]
     options = f"--project-directory {shlex.quote(stack['workdir'])} -p {shlex.quote(stack['project'])} " + \
               " ".join(f"-f {shlex.quote(f)}" for f in files)
     checks = "".join(f"[ -f {shlex.quote(f)} ] || {{ echo 'compose file not found: '{shlex.quote(f)}; exit 3; }}\n"
                      for f in files)
+    run = f"$C {options} pull && $C {options} up -d"
+    if bumps:
+        restore = "; ".join(f"mv -f {shlex.quote(f + BACKUP_SUFFIX)} {shlex.quote(f)}" for f in files)
+        run = f"{run} || {{ code=$?; {restore}; echo 'compose files restored'; exit $code; }}"
     return ('if docker compose version >/dev/null 2>&1; then C="docker compose"; else C=docker-compose; fi\n'
-            f"{checks}$C {options} pull && $C {options} up -d\n")
+            f"{checks}{bump_script(files, bumps)}{run}\n")
 
 
 def backup_container(ctid, storage, shipper):
@@ -1034,8 +1087,10 @@ def backup_container(ctid, storage, shipper):
     return code == 0
 
 
-def docker_step(ctid, job, shipper):
-    """docker compose pull, then up -d, for every Compose stack of one LXC, then remove the old images.
+def docker_step(ctid, job, shipper, config=None):
+    """docker compose pull, then up -d, for every Compose stack of one LXC, then remove the old images. A versioned
+    tag with a newer release of the same major version is written in the compose file first, except in a container
+    of a helper script, whose `update` command decides the version.
 
     Returns (ok, message, note)."""
     prefix = f"[CT {ctid}] "
@@ -1048,10 +1103,13 @@ def docker_step(ctid, job, shipper):
     if not stacks:
         return False, "no running Docker Compose stack found", "no running Docker Compose stack found"
 
+    new_tags = pct_exec(ctid, "test -f /usr/bin/update")[0] != 0
+    auth, cache = (config or {}).get("registry_auth", {}), {}
     failed = []
     for stack in stacks:
         shipper.write(f"{prefix}== stack {stack['project']} ({', '.join(stack['containers'])}) ==\n")
-        code, _, _ = stream_process(in_container(ctid, ["sh", "-c", compose_script(stack)], 3600),
+        bumps = tag_bumps(stack.get("images", []), auth, cache) if new_tags else []
+        code, _, _ = stream_process(in_container(ctid, ["sh", "-c", compose_script(stack, bumps)], 3600),
                                     prefix, shipper, 3600 + HOST_TIMEOUT_MARGIN)
         if code != 0:
             failed.append(stack["project"])
@@ -1074,7 +1132,7 @@ def update_docker_one(ctid, name, job, config, shipper):
     if "update_docker" in backup_actions(job) and not backup_container(ctid, config.get("backup_storage"), shipper):
         ok, message, note = False, "backup failed: nothing was updated", "backup failed, nothing was updated"
     else:
-        ok, message, note = docker_step(ctid, job, shipper)
+        ok, message, note = docker_step(ctid, job, shipper, config)
     finish(shipper, ctid, ok, note)
     return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
@@ -1187,7 +1245,7 @@ def update_chain(job, config, shipper):
             if pct_exec(ctid, "test -f /usr/bin/update")[0] != 0:
                 return False, NO_UPDATE_COMMAND, NO_UPDATE_COMMAND
             return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first backed up step
-        return docker_step(ctid, job, shipper)
+        return docker_step(ctid, job, shipper, config)
 
     def one(item):
         ctid, name = item

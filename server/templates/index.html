@@ -129,7 +129,7 @@
 {% for i in r.docker_rebuilt %}{{ i.image }}<br>{% endfor %}
 {{ t('d_docker_update')|safe }}<br>{% endif %}
 {% if r.docker_newer %}<br>{{ t('d_docker_new_tag') }}<br>
-{% for i in r.docker_newer %}{{ i.image }} → {{ i.latest_tag }}<br>{% endfor %}
+{% for i in r.docker_newer %}{{ i.image }} → {{ i.latest_tag }}{% if not i.update_tag %} ({{ t('d_docker_major') }}){% elif i.update_tag != i.latest_tag %} ({{ t('d_docker_button_to', tag=i.update_tag) }}){% endif %}<br>{% endfor %}
 {{ t('d_docker_new_tag_how')|safe }}<br>{% endif %}
 {% if r.docker_unchecked %}<br>{{ t('d_unchecked') }}<br>{% for i in r.docker_unchecked %}{{ i.image }} ({{ i.error }})<br>{% endfor %}{% endif %}
 {% if r.app_pending and r.app.source %}<br>{{ t('d_target', name=r.app.name, latest=r.app.latest, source=r.app.source) }}{% endif %}

@@ -87,8 +87,10 @@ STRINGS = {
         "d_docker_newer": "Docker images whose tag has a newer version:",
         "d_docker_update": "Update: <code>docker compose pull &amp;&amp; docker compose up -d</code> inside the LXC",
         "d_docker_new_tag": "Docker images with a newer version published under a new tag:",
-        "d_docker_new_tag_how": "Update: change the tag in the compose file, then <code>docker compose up -d</code> "
-                                "inside the LXC",
+        "d_docker_new_tag_how": "<em>Update Docker stacks</em> writes the new tag in the compose file (a copy is "
+                                "kept as <code>.lxc-update-watch.bak</code>), then pulls and recreates the stack",
+        "d_docker_major": "new major version: change the tag by hand",
+        "d_docker_button_to": "the update moves to {tag}, a new major version is changed by hand",
         "d_unchecked": "Not checked:",
         "d_target": "{name}: target version {latest} (source: {source})",
         "d_components": "Components:",
@@ -195,8 +197,11 @@ STRINGS = {
         "d_docker_newer": "Images Docker avec une version plus récente de leur tag :",
         "d_docker_update": "Mise à jour : <code>docker compose pull &amp;&amp; docker compose up -d</code> dans le LXC",
         "d_docker_new_tag": "Images Docker avec une version plus récente publiée sous un nouveau tag :",
-        "d_docker_new_tag_how": "Mise à jour : changer le tag dans le fichier compose, puis "
-                                "<code>docker compose up -d</code> dans le LXC",
+        "d_docker_new_tag_how": "<em>Mettre à jour les piles Docker</em> écrit le nouveau tag dans le fichier "
+                                "compose (une copie est gardée en <code>.lxc-update-watch.bak</code>), puis "
+                                "télécharge et recrée la pile",
+        "d_docker_major": "nouvelle version majeure : changer le tag à la main",
+        "d_docker_button_to": "la mise à jour passe en {tag}, une version majeure se change à la main",
         "d_unchecked": "Non vérifiées :",
         "d_target": "{name} : version cible {latest} (source : {source})",
         "d_components": "Composants :",

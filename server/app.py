@@ -204,10 +204,10 @@ def job_is_active(job):
 
 
 def docker_updatable_containers(state):
-    """Running containers with at least one Docker image whose tag points to a newer image: what `docker compose pull`
-    brings. A newer tag needs the compose file changed first, so it does not count here."""
+    """Running containers with at least one Docker image the Docker update brings: its tag points to a newer image
+    (`docker compose pull`), or a newer tag of the same major version exists (written in the compose file first)."""
     return [ct for ct in state["containers"]
-            if ct["status"] == "running" and any(i.get("update") for i in remote_images(ct))]
+            if ct["status"] == "running" and any(i.get("update") or i.get("update_tag") for i in remote_images(ct))]
 
 
 def app_updatable_containers(state):

@@ -87,14 +87,28 @@ def test_every_docker_image_is_shown_with_its_version(web, token_headers, sample
     assert "app 1: registry unreachable or private" in page
 
 
-def test_a_newer_tag_is_pending_but_not_a_compose_pull(web, token_headers, sample_report):
+def test_a_newer_tag_of_the_same_major_version_can_be_updated(web, token_headers, sample_report):
     sample_report["containers"][1]["docker"] = [
-        {"image": "ghcr.io/gamso/kresus_docker:1.2.1", "update": False, "latest_tag": "1.2.2"}]
+        {"image": "ghcr.io/gamso/kresus_docker:1.2.1", "update": False, "latest_tag": "1.2.2", "update_tag": "1.2.2"}]
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert "kresus_docker 1.2.1 → 1.2.2" in page and "change the tag in the compose file" in page
+    assert "kresus_docker 1.2.1 → 1.2.2" in page and "writes the new tag in the compose file" in page
     assert '<details class="row" data-ctid="101">' in page      # listed with the pending updates
-    assert "Update Docker stacks (0)" in page                    # `docker compose pull` would not bring it
+    assert "Update Docker stacks (1)" in page
+
+
+def test_a_new_major_version_is_shown_but_left_to_the_user(web, token_headers, sample_report):
+    sample_report["containers"][1]["docker"] = [
+        {"image": "postgres:16", "update": False, "latest_tag": "17"},
+        {"image": "ghcr.io/o/app:1.2.1", "update": False, "latest_tag": "2.0.0", "update_tag": "1.4.0"}]
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert "postgres:16 → 17 (new major version: change the tag by hand)" in page
+    assert "ghcr.io/o/app:1.2.1 → 2.0.0 (the update moves to 1.4.0" in page
+    assert "Update Docker stacks (1)" in page                    # thanks to 1.4.0 only
+    sample_report["containers"][1]["docker"].pop()
+    post_report(web, token_headers, sample_report)
+    assert "Update Docker stacks (0)" in web.get("/").get_data(as_text=True)
 
 
 def test_versions_are_shown_and_a_mismatch_is_flagged(web, token_headers, sample_report):

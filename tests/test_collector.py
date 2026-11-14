@@ -771,7 +771,41 @@ def kresus(monkeypatch):
 def test_a_new_version_under_a_new_tag_is_reported(monkeypatch):
     kresus(monkeypatch)
     assert c.docker_status("1", {}, {}) == [{"image": "ghcr.io/gamso/kresus_docker:1.2.1", "version": "1.2.1",
-                                             "update": False, "latest_tag": "1.2.2"}]
+                                             "update": False, "latest_tag": "1.2.2", "update_tag": "1.2.2"}]
+
+
+def test_the_update_only_moves_within_the_major_version():
+    tags = ["1.2.1", "1.4.0", "2.0.0", "16", "17", "16.1", "16.4", "17.0"]
+    assert c.newer_tag("1.2.1", tags) == "2.0.0" and c.newer_tag("1.2.1", tags, same_major=True) == "1.4.0"
+    assert c.newer_tag("16", tags) == "17" and c.newer_tag("16", tags, same_major=True) is None
+    assert c.newer_tag("16.1", tags, same_major=True) == "16.4"
+
+
+def test_compose_script_writes_the_new_tag_and_restores_on_failure():
+    stack = {"project": "k", "workdir": "/opt/k", "files": "/opt/k/a.yml"}
+    script = c.compose_script(stack, [("ghcr.io/o/app:1.2.1", "ghcr.io/o/app:1.2.2")])
+    assert script.index("cp -p /opt/k/a.yml /opt/k/a.yml.lxc-update-watch.bak") < script.index("sed -E -i")
+    assert "ghcr\\.io/o/app:1\\.2\\.1" in script and "\\1ghcr.io/o/app:1.2.2\\2" in script
+    assert script.index("sed -E -i") < script.index(" pull ")
+    assert "mv -f /opt/k/a.yml.lxc-update-watch.bak /opt/k/a.yml" in script
+    assert "sed" not in c.compose_script(stack) and ".bak" not in c.compose_script(stack)
+
+
+def test_tag_bumps_skip_mobile_and_odd_references(monkeypatch):
+    monkeypatch.setattr(c, "registry_tags", lambda registry, repo, auth, cache: ["1.2.1", "1.2.2", "2.0.0", "8"])
+    images = ["ghcr.io/o/app:1.2.1", "nginx:latest", "redis:7", "x/y:1.2.1@sha256:abc", "bad$(rm):1.2.1"]
+    assert c.tag_bumps(images, {}, {}) == [("ghcr.io/o/app:1.2.1", "ghcr.io/o/app:1.2.2")]
+
+
+def test_docker_update_writes_newer_tags_except_for_helper_scripts(monkeypatch):
+    inventory = "k|/opt/k|/opt/k/a.yml|/k-1|ghcr.io/o/app:1.2.1"
+    commands = docker_env(monkeypatch, inventory=inventory)
+    monkeypatch.setattr(c, "registry_tags", lambda registry, repo, auth, cache: ["1.2.1", "1.2.2"])
+    run_docker()                                                # docker_env: /usr/bin/update exists
+    assert "sed -E -i" not in " ".join(commands[-1])
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (1, "") if "update" in script else (0, inventory))
+    result, _ = run_docker()
+    assert result["ok"] and "ghcr.io/o/app:1.2.2" in " ".join(commands[-1])
 
 
 def test_a_helper_script_container_does_not_get_newer_tags(monkeypatch):
