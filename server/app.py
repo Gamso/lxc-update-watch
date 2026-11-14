@@ -1,13 +1,20 @@
 """Web service: receives the collector's reports and shows which LXC containers can be updated."""
+import functools
 import hmac
 import json
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
+
+try:
+    import fcntl
+except ImportError:   # Windows (development only): the in-process lock is all there is
+    fcntl = None
 
 import auth
 from i18n import COOKIE, LANGUAGE_NAMES, SUPPORTED, Translator, pick_language
@@ -63,6 +70,31 @@ def write_json(path, data):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+STATE_LOCK = threading.Lock()
+
+
+def serialized(view):
+    """Run a view that reads then writes the state files alone.
+
+    The state is a few JSON files changed in read-modify-write steps (a job, its log, the live progress). One lock
+    per process covers threads; a lock file covers several gunicorn workers. Without both, two requests at the same
+    moment could each overwrite the other's change."""
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        with STATE_LOCK:
+            if fcntl is None:
+                return view(*args, **kwargs)
+            lock_path = STATE_FILE.with_name(".lock")
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(lock_path, "a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                try:
+                    return view(*args, **kwargs)
+                finally:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+    return wrapper
 
 
 def load_state():
@@ -414,6 +446,7 @@ def api_status():
 
 
 @app.post("/api/report")
+@serialized
 def api_report():
     require_token()
     note_collector()
@@ -435,6 +468,7 @@ def api_report():
 
 
 @app.post("/api/report/host")
+@serialized
 def api_report_host():
     """The collector's new reading of the Proxmox host's updates alone (after an upgrade of the host): the containers
     are not checked again, so the rest of the last report stays as it is."""
@@ -482,6 +516,7 @@ def apply_progress_events(progress, events):
 
 
 @app.post("/api/progress")
+@serialized
 def api_progress_post():
     require_token()
     body = request.get_json(silent=True) or {}
@@ -531,6 +566,7 @@ def api_progress_get():
 
 
 @app.post("/api/refresh")
+@serialized
 def api_refresh():
     request_refresh()
     return jsonify(refreshing=True), 202
@@ -560,6 +596,7 @@ def start_host_upgrade(state):
 
 
 @app.post("/api/actions")
+@serialized
 def api_actions():
     # No password: access control belongs to the network or a reverse proxy. The body must be JSON, which a
     # cross-site form cannot send (and a cross-site fetch would need a CORS preflight this service never answers).
@@ -603,6 +640,7 @@ def api_actions():
 
 
 @app.post("/api/jobs/dismiss")
+@serialized
 def api_job_dismiss():
     """Clear the card of the last job (its results and its console output) once it is over."""
     if not isinstance(request.get_json(silent=True), dict):   # JSON only, like the actions: a form cannot send it
@@ -615,6 +653,7 @@ def api_job_dismiss():
 
 
 @app.get("/api/jobs/pending")
+@serialized
 def api_jobs_pending():
     require_token()
     note_collector()
@@ -624,6 +663,7 @@ def api_jobs_pending():
 
 
 @app.post("/api/jobs/<job_id>/start")
+@serialized
 def api_job_start(job_id):
     require_token()
     job = job_for_collector(job_id)
@@ -633,6 +673,7 @@ def api_job_start(job_id):
 
 
 @app.post("/api/jobs/<job_id>/result")
+@serialized
 def api_job_result(job_id):
     require_token()
     job = job_for_collector(job_id)
@@ -645,6 +686,7 @@ def api_job_result(job_id):
 
 
 @app.post("/api/jobs/<job_id>/log")
+@serialized
 def api_job_log_append(job_id):
     require_token()
     job_for_collector(job_id)
