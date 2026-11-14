@@ -7,6 +7,8 @@ WorkingDirectory=/opt/lxc-update-watch/server
 EnvironmentFile=/etc/lxc-update-watch.env
 Environment=LXC_WATCH_DATA=/var/lib/lxc-update-watch
 StateDirectory=lxc-update-watch
+# One worker is plenty for this page. More workers or threads are safe too: the requests that change the state
+# files take a lock (a lock file in LXC_WATCH_DATA).
 ExecStart=/opt/lxc-update-watch/venv/bin/gunicorn -w 1 -b 0.0.0.0:8080 app:app
 Restart=on-failure
 DynamicUser=yes

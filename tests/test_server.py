@@ -607,6 +607,33 @@ def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report
     assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"
 
 
+def test_simultaneous_requests_do_not_overwrite_each_other(web, token_headers, monkeypatch):
+    import threading
+    import time
+
+    import app as web_app
+    containers = [{"ctid": n, "name": f"ct{n}", "status": "running"} for n in range(12)]
+    web.post("/api/progress", json={"run": "r", "events": [{"type": "start", "containers": containers}]},
+             headers=token_headers)
+    slow_read = web_app.read_json
+
+    def read_json(path):           # widen the gap between reading and writing the file
+        data = slow_read(path)
+        time.sleep(0.01)
+        return data
+
+    monkeypatch.setattr(web_app, "read_json", read_json)
+
+    def finish(n):
+        events = [{"type": "step", "ctid": n, "step": step, "state": "done"} for step in ("system", "app", "docker")]
+        web_app.app.test_client().post("/api/progress", json={"run": "r", "events": events}, headers=token_headers)
+
+    threads = [threading.Thread(target=finish, args=(n,)) for n in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert web.get("/api/progress").get_json()["done"] == 12
 def test_a_form_on_another_site_cannot_start_a_check(web):
     assert web.post("/api/refresh", data="x=1", content_type="application/x-www-form-urlencoded").status_code == 400
     assert web.post("/api/refresh", data="").status_code == 400
