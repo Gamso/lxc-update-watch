@@ -561,6 +561,20 @@ def collect_one(entry, config, cache, progress=None):
     return ct
 
 
+def safe_collect_one(entry, config, cache, progress=None):
+    """collect_one, but a bug or an unexpected reply in one container (a bad version_regex in the config, an odd
+    output...) only marks that container as failed: the others are still checked and the report is still sent."""
+    try:
+        return collect_one(entry, config, cache, progress)
+    except Exception as e:
+        ctid, status, name = entry
+        print(f"CT {ctid}: check failed: {e!r}", file=sys.stderr)
+        for step in ("system", "app", "docker"):
+            report_step(progress, ctid, step, "done")  # the live view must not wait for this container forever
+        return {"ctid": int(ctid), "name": name, "status": status, "os_updates": None,
+                "error": f"check_failed: {e}"[:200]}
+
+
 # ---------------------------------------------------------------- jobs requested from the web page
 
 UPGRADE_SCRIPT = (
@@ -699,9 +713,24 @@ def upgrade_containers(ctids, config, shipper, backup=False):
                   f"{', backing up first' if backup else ', no backup'}\n")
     for ctid in skipped:
         finish(shipper, ctid, False, "container stopped or not found")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(lambda t: upgrade_one(*t, shipper, storage if backup else None), todo))
+    results += map_containers(lambda t: upgrade_one(*t, shipper, storage if backup else None), todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
+
+
+def map_containers(fn, todo, workers, shipper):
+    """Run fn((ctid, name)) for every container, a few at a time. An exception in one container becomes a failed
+    result for that container alone: the results of the others are kept."""
+    def safe(item):
+        ctid, name = item
+        try:
+            return fn(item)
+        except Exception as e:
+            message = f"internal error: {e}"[:200]
+            finish(shipper, ctid, False, message)
+            return {"label": f"CT {ctid} {name}", "ok": False, "message": message}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(safe, todo))
 
 
 NO_UPDATE_COMMAND = "stopped, or no update command (container not created by a helper script)"
@@ -758,8 +787,7 @@ def update_apps(job, config, shipper):
         finish(shipper, ctid, ok, note)
         return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(one, todo))
+    results += map_containers(one, todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -880,8 +908,7 @@ def update_docker(job, config, shipper):
     shipper.write(f"Docker stack update of {len(todo)} container(s) ({', '.join(notes)})\n")
     for ctid in [r for r in job["ctids"] if r not in running]:
         finish(shipper, ctid, False, "container stopped or not found")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(lambda item: update_docker_one(*item, job, config, shipper), todo))
+    results += map_containers(lambda item: update_docker_one(*item, job, config, shipper), todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -990,8 +1017,7 @@ def update_chain(job, config, shipper):
         finish(shipper, ctid, True)
         return {"label": label, "ok": True, "message": "; ".join(done)[:200]}
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(one, todo))
+    results += map_containers(one, todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -1076,7 +1102,7 @@ def main():
     if progress:
         progress.event(type="start", containers=[{"ctid": int(c[0]), "name": c[2], "status": c[1]} for c in to_check])
     with ThreadPoolExecutor(max_workers=4) as pool:
-        containers = list(pool.map(lambda e: collect_one(e, config, cache, progress), to_check))
+        containers = list(pool.map(lambda e: safe_collect_one(e, config, cache, progress), to_check))
     if progress:
         progress.close()  # every event must be delivered before the report ends the live view
     containers.sort(key=lambda c: c["ctid"])
