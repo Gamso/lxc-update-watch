@@ -117,15 +117,29 @@ def host_updates():
 
 # ---------------------------------------------------------------- operating system updates
 
+OS_CHECK_FAILED = "__LXCW_CHECK_FAILED__"
+# Both scripts print OS_CHECK_FAILED when the package lists cannot be refreshed or read: an empty output must only
+# ever mean "nothing to upgrade", never "the mirror was unreachable".
+APT_CHECK_SCRIPT = (
+    f"apt-get update -qq >/dev/null 2>&1 || {{ echo {OS_CHECK_FAILED}; exit 0; }}; "
+    f"out=$(LC_ALL=C apt-get -s upgrade 2>/dev/null) || {{ echo {OS_CHECK_FAILED}; exit 0; }}; "
+    "printf '%s\\n' \"$out\" | grep '^Inst'; true"
+)
+APK_CHECK_SCRIPT = (
+    f"apk update >/dev/null 2>&1 || {{ echo {OS_CHECK_FAILED}; exit 0; }}; "
+    f"apk list -u 2>/dev/null || echo {OS_CHECK_FAILED}"
+)
+
+
 def os_updates(ctid):
+    """(OS id, number of pending packages, package lines). The number is None when it cannot be known: unsupported
+    OS, package lists that could not be refreshed, or a check that timed out."""
     _, osid = pct_exec(ctid, ". /etc/os-release 2>/dev/null; echo \"$ID\"")
     osid = osid or "unknown"
     if osid in ("debian", "ubuntu"):
-        _, out = pct_exec(
-            ctid,
-            "apt-get update -qq >/dev/null 2>&1; apt-get -s upgrade 2>/dev/null | grep '^Inst'",
-            timeout=300,
-        )
+        code, out = pct_exec(ctid, APT_CHECK_SCRIPT, timeout=300)
+        if code != 0 or OS_CHECK_FAILED in out:
+            return osid, None, []
         packages = []
         for line in out.splitlines():
             m = APT_INST_RE.match(line)
@@ -134,7 +148,9 @@ def os_updates(ctid):
                 packages.append(f"{name} {old} → {new}" if old else f"{name} → {new}")
         return osid, len(packages), packages
     if osid == "alpine":
-        _, out = pct_exec(ctid, "apk update >/dev/null 2>&1; apk list -u 2>/dev/null", timeout=300)
+        code, out = pct_exec(ctid, APK_CHECK_SCRIPT, timeout=300)
+        if code != 0 or OS_CHECK_FAILED in out:
+            return osid, None, []
         packages = [line.split()[0] for line in out.splitlines() if line.strip()]
         return osid, len(packages), packages
     return osid, None, []
@@ -161,17 +177,16 @@ def strip_v(version):
 
 
 def latest_github_release(repo, token, cache, prefix=None):
-    """Tag of the latest release; with `prefix`, the newest one whose version starts with that prefix."""
+    """Tag of the latest release; with `prefix`, the newest one whose version starts with that prefix.
+
+    Read through the disk cache, like the helper scripts' releases: every check would otherwise cost one GitHub API
+    request per application, and 60 per hour is all there is without a token."""
     key = f"{repo}@{prefix}" if prefix else repo
     if key in cache:
         return cache[key]
     url = f"https://api.github.com/repos/{repo}/releases" + ("?per_page=100" if prefix else "/latest")
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT})
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.load(resp)
+        data = json.loads(cached_fetch(url, RELEASE_TTL, token) or "null")
         if prefix:
             candidates = [
                 r["tag_name"] for r in data
@@ -181,9 +196,24 @@ def latest_github_release(repo, token, cache, prefix=None):
             cache[key] = max(candidates, key=lambda t: version_key(parse_version(t)), default=None)
         else:
             cache[key] = data["tag_name"]
-    except (urllib.error.URLError, KeyError, ValueError, TimeoutError):
+    except (KeyError, ValueError, TypeError):
         cache[key] = None
     return cache[key]
+
+
+RELEASE_TTL = 900
+# Set once GitHub refused a request because the hourly quota is spent: the versions it could not give are then
+# reported as such, so that the page says why instead of a vague "unavailable".
+GITHUB_RATE_LIMITED = threading.Event()
+
+
+def is_rate_limited(error):
+    return error.code == 429 or (error.code == 403 and error.headers.get("X-RateLimit-Remaining") == "0")
+
+
+def unavailable(code):
+    """Error code of a version GitHub did not give: the rate limit when that is the reason, else `code`."""
+    return "github_rate_limited" if GITHUB_RATE_LIMITED.is_set() else code
 
 
 def cached_fetch(url, ttl, token=None):
@@ -201,7 +231,9 @@ def cached_fetch(url, ttl, token=None):
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as resp:
             text = resp.read().decode("utf-8", "replace")
-    except (urllib.error.URLError, TimeoutError):
+    except (urllib.error.URLError, TimeoutError) as e:
+        if isinstance(e, urllib.error.HTTPError) and "api.github.com" in url and is_rate_limited(e):
+            GITHUB_RATE_LIMITED.set()
         try:
             with open(path, encoding="utf-8") as f:  # on failure, a stale copy beats nothing
                 return f.read()
@@ -266,7 +298,7 @@ def app_status(ctid, app_cfg, github_token, cache):
         source = "GitHub"
     latest = parse_version(tag, app_cfg.get("version_regex")) if tag else None
     if not latest:
-        return {"name": name, "installed": installed, "error": "latest_version_unavailable"}
+        return {"name": name, "installed": installed, "error": unavailable("latest_version_unavailable")}
     a, b = version_key(installed), version_key(latest)
     update = b > a if a and b else installed != latest
     result = {"name": name, "installed": installed, "latest": latest, "update": update, "source": source}
@@ -445,14 +477,14 @@ def release_target(comp, token):
         return comp["pin"]
     api = f"https://api.github.com/repos/{comp['repo']}/releases"
     if comp["prefix"]:
-        text = cached_fetch(api + "?per_page=100", 900, token)
+        text = cached_fetch(api + "?per_page=100", RELEASE_TTL, token)
         try:
             tags = [r["tag_name"] for r in json.loads(text or "[]") if not r["draft"] and not r["prerelease"]
                     and r["tag_name"].startswith(comp["prefix"])]
         except (ValueError, KeyError, TypeError):
             return None
         return tags[0] if tags else None
-    text = cached_fetch(api + "/latest", 900, token)
+    text = cached_fetch(api + "/latest", RELEASE_TTL, token)
     try:
         return json.loads(text or "{}").get("tag_name")
     except ValueError:
@@ -480,7 +512,7 @@ def auto_app_status(ctid, name, config, cache):
             target = strip_v(tag) if tag else None
             found.append({"name": comp["name"], "installed": current, "latest": target,
                           "update": bool(target) and current != target,
-                          "error": None if target else "target_version_unavailable"})
+                          "error": None if target else unavailable("target_version_unavailable")})
         if not found:
             continue  # the host name looks like this script but nothing from it is installed here
         main = next((c for c in found if c["update"]), found[0])
@@ -904,7 +936,16 @@ def upgrade_host(job, config, shipper):
     label = "Proxmox host"
     if not config.get("allow_host_upgrade", True):
         return [{"label": label, "ok": False, "message": "allow_host_upgrade is false in the collector config"}]
-    current = host_updates()   # read again: the list may have changed since the page was built
+    # Refresh the lists first, like the Refresh button of the Updates panel: lists up to a day old can point to
+    # package versions the mirror no longer has. A repository that fails (an enterprise repository without a
+    # subscription, a mirror down) is not a reason to stop: the upgrade then works with the lists it has.
+    shipper.write("[PVE] Refreshing the package lists (apt-get update)\n")
+    code, out = run(["env", "LC_ALL=C", "apt-get", "update"], timeout=600)
+    if code != 0:
+        problems = [line for line in out.splitlines() if line.startswith(("E:", "W:", "Err:"))][-3:]
+        shipper.write("[PVE] apt-get update reported errors, continuing with the lists as they are"
+                      + "".join(f"\n[PVE]   {line}" for line in problems) + "\n")
+    current = host_updates()   # read again: the list may have changed since the page was built, kernel included
     if "error" in current:
         return [{"label": label, "ok": False, "message": "could not read the host updates (apt-get failed)"}]
     if not current["count"]:
@@ -1041,7 +1082,24 @@ def run_job(config, job):
     failed = sum(1 for r in results if not r["ok"])
     shipper.write(f"\n== Done: {len(results) - failed} succeeded, {failed} failed ==\n")
     shipper.close()
-    server_call(config, "POST", f"/api/jobs/{job['id']}/result", {"results": results}, timeout=30)
+    send_result(config, job["id"], results)
+
+
+RESULT_RETRY_DELAYS = (5, 15, 30, 60)
+
+
+def send_result(config, job_id, results):
+    """Deliver the results of a job, retrying for about two minutes: without them the page would wait until the
+    service gives up on the job."""
+    for delay in RESULT_RETRY_DELAYS + (None,):
+        try:
+            server_call(config, "POST", f"/api/jobs/{job_id}/result", {"results": results}, timeout=30)
+            return True
+        except (OSError, ValueError) as e:
+            if delay is None:
+                print(f"Could not send the result of job {job_id}: {e}", file=sys.stderr)
+                return False
+            time.sleep(delay)
 
 
 # ---------------------------------------------------------------- entry point

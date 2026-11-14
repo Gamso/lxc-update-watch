@@ -18,4 +18,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check .
+      - name: JavaScript syntax
+        run: node --check server/static/app.js
       - run: python -m pytest -q
