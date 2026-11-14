@@ -121,6 +121,23 @@ def require_token():
         api_error(401, "unauthorized", "invalid token")
 
 
+SECURITY_HEADERS = {
+    # The page starts updates as root with a single click: it must never be shown inside another site's frame,
+    # where a visitor could be tricked into clicking its buttons (clickjacking).
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
+@app.after_request
+def security_headers(response):
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 @app.errorhandler(HTTPException)
 def json_errors(error):
     if error.response is not None:
@@ -547,8 +564,16 @@ def api_progress_get():
                    containers=containers, **result)
 
 
+def require_json_body():
+    """Refuse a request whose body is not JSON. A form on another site can post to this service without any
+    preflight, but only with a form encoding: requiring JSON keeps the browser's same-origin rules in charge."""
+    if not isinstance(request.get_json(silent=True), dict):
+        api_error(400, "json_required", "the body must be a JSON object")
+
+
 @app.post("/api/refresh")
 def api_refresh():
+    require_json_body()
     request_refresh()
     return jsonify(refreshing=True), 202
 
@@ -622,8 +647,7 @@ def api_actions():
 @app.post("/api/jobs/dismiss")
 def api_job_dismiss():
     """Clear the card of the last job (its results and its console output) once it is over."""
-    if not isinstance(request.get_json(silent=True), dict):   # JSON only, like the actions: a form cannot send it
-        api_error(400, "unknown_action", "unknown action")
+    require_json_body()
     if job_is_active(load_job()):
         api_error(409, "job_running", "a job is already running")
     JOB_FILE.unlink(missing_ok=True)

@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -165,11 +166,29 @@ def parse_version(text, pattern=None):
     return (m.group(1) if m.groups() else m.group(0)).lstrip("v")
 
 
+PRE_TAG_RE = re.compile(r"alpha|beta|rc|pre|dev|nightly|snapshot", re.IGNORECASE)
+
+
 def version_key(version):
-    try:
-        return tuple(int(x) for x in re.split(r"[.-]", version.split("+")[0]) if x.isdigit())
-    except ValueError:
+    """Sortable key of a version, () when there is no number to compare.
+
+    1.2 and 1.2.0 are the same version; a pre-release (2.0.0-rc1) comes before its release (2.0.0); a packaging
+    revision (1.2.3-2) comes after 1.2.3-1."""
+    m = re.match(r"v?(\d+(?:\.\d+)*)(.*)", (version or "").split("+")[0])
+    if not m:
         return ()
+    numbers = [int(x) for x in m.group(1).split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    rest = m.group(2)
+    stage = 0 if PRE_TAG_RE.search(rest) else 1
+    return tuple(numbers), stage, tuple(int(x) for x in re.findall(r"\d+", rest))
+
+
+def is_newer(latest, installed):
+    """True when `latest` is a newer version than `installed` (plain inequality when they cannot be compared)."""
+    a, b = version_key(installed), version_key(latest)
+    return b > a if a and b else installed != latest
 
 
 def strip_v(version):
@@ -299,9 +318,8 @@ def app_status(ctid, app_cfg, github_token, cache):
     latest = parse_version(tag, app_cfg.get("version_regex")) if tag else None
     if not latest:
         return {"name": name, "installed": installed, "error": unavailable("latest_version_unavailable")}
-    a, b = version_key(installed), version_key(latest)
-    update = b > a if a and b else installed != latest
-    result = {"name": name, "installed": installed, "latest": latest, "update": update, "source": source}
+    result = {"name": name, "installed": installed, "latest": latest, "update": is_newer(latest, installed),
+              "source": source}
     if app_cfg.get("update_cmd"):
         result["update_cmd"] = app_cfg["update_cmd"]
     return result
@@ -333,10 +351,14 @@ MANIFEST_ACCEPT = ", ".join([
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ])
+# One line per running image: <name it was started from>\t<RepoDigests of the image the container really runs>.
+# `docker ps --format {{.Image}}` is not enough: once the tag has been pulled again (a newer image downloaded but the
+# container not recreated), it prints the bare image ID, and the running image could no longer be compared.
 DOCKER_LIST_SCRIPT = (
     "command -v docker >/dev/null 2>&1 || exit 0; "
-    "docker ps --format '{{.Image}}' 2>/dev/null | sort -u | while read -r img; do "
-    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$img\" 2>/dev/null || echo '[]'; "
+    "for id in $(docker ps -q 2>/dev/null); do docker inspect -f '{{.Config.Image}}|{{.Image}}' \"$id\"; done "
+    "| sort -u | while IFS='|' read -r img imgid; do "
+    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$imgid\" 2>/dev/null || echo '[]'; "
     "done"
 )
 
@@ -511,7 +533,7 @@ def auto_app_status(ctid, name, config, cache):
             tag = release_target(comp, token)
             target = strip_v(tag) if tag else None
             found.append({"name": comp["name"], "installed": current, "latest": target,
-                          "update": bool(target) and current != target,
+                          "update": bool(target) and is_newer(target, current),
                           "error": None if target else unavailable("target_version_unavailable")})
         if not found:
             continue  # the host name looks like this script but nothing from it is installed here
@@ -652,7 +674,14 @@ def finish(shipper, ctid, ok, note=""):
 
 
 class LogShipper:
-    """Sends the output of the commands to the web page in batches (once a second) without ever blocking the job."""
+    """Sends the output of the commands to the web page in batches (once a second) without ever blocking the job.
+
+    While the service is unreachable the output waits in memory, up to MAX_PENDING_CHARS (the service keeps no more
+    than about that much anyway): beyond it the oldest waiting output is dropped. A job the service no longer knows
+    (cleared, replaced) gets nothing more."""
+
+    MAX_PENDING_CHARS = 1_000_000
+    DROPPED = "\n[console output dropped while the web service was unreachable]\n"
 
     def __init__(self, config, job_id):
         self.config, self.job_id = config, job_id
@@ -673,9 +702,20 @@ class LogShipper:
             return
         try:
             server_call(self.config, "POST", f"/api/jobs/{self.job_id}/log", {"text": text}, timeout=10)
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                return  # unknown job or refused: sending it again would never work
+            self._requeue(text)
         except (urllib.error.URLError, ValueError, TimeoutError, OSError):
-            with self.lock:
-                self.pending.insert(0, text)  # retried on the next pass
+            self._requeue(text)
+
+    def _requeue(self, text):
+        """Put back output that could not be sent, for the next pass, within MAX_PENDING_CHARS."""
+        with self.lock:
+            text = "".join([text] + self.pending)
+            if len(text) > self.MAX_PENDING_CHARS:
+                text = self.DROPPED + text[-(self.MAX_PENDING_CHARS - len(self.DROPPED)):]
+            self.pending = [text]
 
     def _loop(self):
         while not self.stop.wait(1.0):
@@ -1074,6 +1114,13 @@ def update_chain(job, config, shipper):
     return sorted(results, key=lambda r: r["label"])
 
 
+def server_tls(config):
+    """TLS context for an https server_url: the system's CAs, or `server_ca_file` (a self-signed certificate or a
+    private CA, in PEM). None for http, where nothing is encrypted and the token travels in clear text."""
+    ca_file = config.get("server_ca_file")
+    return ssl.create_default_context(cafile=ca_file) if ca_file else None
+
+
 def server_call(config, method, path, body=None, timeout=15):
     req = urllib.request.Request(
         config["server_url"].rstrip("/") + path,
@@ -1082,7 +1129,7 @@ def server_call(config, method, path, body=None, timeout=15):
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}",
                  "X-Collector-Version": VERSION},  # lets the page tell which collector is installed right now
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=server_tls(config)) as resp:
         return json.load(resp)
 
 
@@ -1161,6 +1208,10 @@ def main():
         config = {}
         if not args.dry_run:
             sys.exit(f"Config file not found: {CONFIG_PATH}")
+    if not args.dry_run and not args.if_requested and not config.get("server_url", "").startswith("https://"):
+        # Once a day (the full check), not every minute: the poll would fill the journal.
+        print("Note: server_url is not https, the token and the reports travel in clear text "
+              "(see 'Encrypting the traffic' in the README).", file=sys.stderr)
 
     if args.if_requested and not handle_requests(config):
         return
@@ -1195,7 +1246,7 @@ def main():
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['token']}"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=server_tls(config)) as resp:
             print(f"Report sent ({resp.status}): {len(containers)} container(s).")
     except urllib.error.URLError as e:
         sys.exit(f"Could not send the report: {e}")

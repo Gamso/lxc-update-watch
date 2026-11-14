@@ -30,6 +30,21 @@ def test_version_helpers():
     assert c.parse_version("v1.37.3") == "1.37.3"
     assert c.parse_version("no version here") is None
     assert c.version_key("1.10.0") > c.version_key("1.9.9")
+
+
+@pytest.mark.parametrize("latest, installed, newer", [
+    ("1.2.0", "1.2", False),          # same version, written differently
+    ("1.2", "1.2.0", False),
+    ("v1.3", "1.2.9", True),
+    ("2.0.0", "2.0.0-rc1", True),     # the release follows its release candidate
+    ("2.0.0-rc2", "2.0.0-rc1", True),
+    ("2.0.0-rc1", "2.0.0", False),
+    ("1.2.3-2", "1.2.3-1", True),     # packaging revision
+    ("1.2.3", "1.2.4", False),        # never "update" to an older version
+    ("abc", "def", True),             # not comparable: any difference counts
+])
+def test_is_newer(latest, installed, newer):
+    assert c.is_newer(latest, installed) is newer
     assert c.strip_v("v1.2") == "1.2" and c.strip_v("verbose") == "verbose"
 
 
@@ -590,11 +605,113 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
         def read(self, *args):
             return b"{}"
 
-    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None, context=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
 
 
+# ---------------------------------------------------------------- TLS to the web service
+
+def test_the_service_certificate_can_come_from_a_private_ca(monkeypatch):
+    seen = []
+    monkeypatch.setattr(c.ssl, "create_default_context", lambda cafile=None: seen.append(cafile) or "ctx")
+    assert c.server_tls({"server_url": "https://lxc.lan"}) is None          # public CA: the default context
+    assert c.server_tls({"server_ca_file": "/etc/lxcw-ca.pem"}) == "ctx" and seen == ["/etc/lxcw-ca.pem"]
+
+
+def test_server_calls_use_the_tls_context(monkeypatch):
+    contexts = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, *args):
+            return b"{}"
+
+    monkeypatch.setattr(c, "server_tls", lambda config: "ctx")
+    monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None, context=None: contexts.append(context) or Reply())
+    c.server_call({"server_url": "https://x", "token": "t"}, "GET", "/api/jobs/pending")
+    assert contexts == ["ctx"]
+# ---------------------------------------------------------------- time limits inside the containers
+
+def test_commands_in_a_container_carry_their_own_time_limit():
+    cmd = c.in_container(101, ["docker", "image", "prune", "-f"], 900)
+    assert cmd[:7] == ["pct", "exec", "101", "--", "sh", "-c", c.TIMEOUT_GUARD]
+    assert cmd[7:] == ["900", "docker", "image", "prune", "-f"]
+
+
+@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("timeout") is None,
+                    reason="needs a POSIX shell with timeout")
+def test_the_timeout_guard_stops_the_command_and_keeps_exit_codes():
+    import subprocess
+    guard = ["sh", "-c", c.TIMEOUT_GUARD]
+    assert subprocess.run(guard + ["1", "sh", "-c", "sleep 5"]).returncode == 124
+    assert subprocess.run(guard + ["5", "sh", "-c", "exit 3"]).returncode == 3
+    out = subprocess.run(guard + ["5", "sh", "-c", "echo \"$1\"", "sh", "a b"], capture_output=True, text=True)
+    assert out.stdout == "a b\n"
+# ---------------------------------------------------------------- Docker images
+
+def test_docker_list_reads_the_image_each_container_really_runs():
+    # The name comes from the container's config and the digests from the image ID it runs, not from the tag,
+    # which may already point to a newer image pulled but not yet used.
+    assert "{{.Config.Image}}|{{.Image}}" in c.DOCKER_LIST_SCRIPT
+    assert '"$imgid"' in c.DOCKER_LIST_SCRIPT and "docker ps --format" not in c.DOCKER_LIST_SCRIPT
+
+
+def test_an_image_pulled_again_but_not_restarted_is_an_update(monkeypatch):
+    old = "sha256:" + "a" * 64
+    new = "sha256:" + "b" * 64
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, f'nginx:latest\t["nginx@{old}"]'))
+    monkeypatch.setattr(c, "registry_digest", lambda registry, repo, tag, auth, cache: new)
+    assert c.docker_status("1", {}, {}) == [{"image": "nginx:latest", "update": True}]
+# ---------------------------------------------------------------- console output of the jobs
+
+def log_shipper(monkeypatch, outcome):
+    sent = []
+
+    def fake_call(config, method, path, body=None, timeout=15):
+        if outcome:
+            raise outcome[0]
+        sent.append(body["text"])
+
+    monkeypatch.setattr(c, "server_call", fake_call)
+    shipper = c.LogShipper({}, "j")
+    shipper.stop.set()            # no background flush: the test drives it
+    shipper.thread.join()
+    return shipper, sent
+
+
+def test_log_shipper_keeps_the_output_while_the_service_is_down(monkeypatch):
+    outcome = [OSError("down")]
+    shipper, sent = log_shipper(monkeypatch, outcome)
+    shipper.write("one\n")
+    shipper._flush()
+    shipper.write("two\n")
+    outcome.clear()
+    shipper._flush()
+    assert sent == ["one\ntwo\n"]
+
+
+def test_log_shipper_memory_is_bounded(monkeypatch):
+    shipper, _ = log_shipper(monkeypatch, [OSError("down")])
+    monkeypatch.setattr(c.LogShipper, "MAX_PENDING_CHARS", 200)
+    for i in range(50):
+        shipper.write(f"line {i:03}\n")
+        shipper._flush()
+    waiting = "".join(shipper.pending)
+    assert len(waiting) <= 200 and "dropped" in waiting and waiting.endswith("line 049\n")
+
+
+def test_log_shipper_drops_output_of_a_job_the_service_forgot(monkeypatch):
+    gone = c.urllib.error.HTTPError("http://x", 404, "unknown job", {}, None)
+    shipper, _ = log_shipper(monkeypatch, [gone])
+    shipper.write("late\n")
+    shipper._flush()
+    assert shipper.pending == []
 # ---------------------------------------------------------------- one container must not break the others
 
 def test_a_container_whose_check_crashes_does_not_stop_the_report(monkeypatch, capsys):
@@ -628,23 +745,8 @@ def test_an_exception_in_one_container_keeps_the_results_of_the_others():
     results = c.map_containers(work, [(1, "a"), (2, "b"), (3, "c")], 2, shipper)
     assert [r["ok"] for r in results] == [True, False, True]
     assert results[1]["message"] == "internal error: boom" and "[CT 2]" in shipper.text and "finished: failed" in shipper.text
-# ---------------------------------------------------------------- time limits inside the containers
-
-def test_commands_in_a_container_carry_their_own_time_limit():
-    cmd = c.in_container(101, ["docker", "image", "prune", "-f"], 900)
-    assert cmd[:7] == ["pct", "exec", "101", "--", "sh", "-c", c.TIMEOUT_GUARD]
-    assert cmd[7:] == ["900", "docker", "image", "prune", "-f"]
 
 
-@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("timeout") is None,
-                    reason="needs a POSIX shell with timeout")
-def test_the_timeout_guard_stops_the_command_and_keeps_exit_codes():
-    import subprocess
-    guard = ["sh", "-c", c.TIMEOUT_GUARD]
-    assert subprocess.run(guard + ["1", "sh", "-c", "sleep 5"]).returncode == 124
-    assert subprocess.run(guard + ["5", "sh", "-c", "exit 3"]).returncode == 3
-    out = subprocess.run(guard + ["5", "sh", "-c", "echo \"$1\"", "sh", "a b"], capture_output=True, text=True)
-    assert out.stdout == "a b\n"
 # ---------------------------------------------------------------- GitHub API
 
 class FakeResponse:
