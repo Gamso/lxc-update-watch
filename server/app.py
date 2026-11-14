@@ -329,7 +329,8 @@ def index():
     return render_template("index.html", view=build_view(state, tr) if state else None, t=tr, lang=tr.lang,
                            languages=[(code, LANGUAGE_NAMES[code]) for code in SUPPORTED],
                            i18n=tr.browser_strings(), version=VERSION,
-                           login=bool(app.config.get("OIDC")), user=auth.current_user())
+                           login=bool(app.config.get("OIDC")), user=auth.current_user(),
+                           refreshing=refresh_requested_at() is not None)
 
 
 @app.get("/healthz")
