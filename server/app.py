@@ -219,6 +219,8 @@ def app_badges(ct, tr, final=True):
     instead of the "not tracked" placeholder."""
     if ct["status"] != "running":
         return []
+    if ct.get("error"):   # the collector could not check this container at all
+        return [(tr("b_check_failed"), "n")]
     badges = []
     app_info = ct.get("app")
     if app_info:

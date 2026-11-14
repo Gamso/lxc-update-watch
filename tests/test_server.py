@@ -607,6 +607,12 @@ def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report
     assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"
 
 
+def test_a_container_the_collector_could_not_check_says_so(web, token_headers, sample_report):
+    sample_report["containers"][0].update(error="check_failed: boom", os_updates=None)
+    sample_report["containers"][0].pop("app", None)
+    post_report(web, token_headers, sample_report)
+    page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert "Check failed" in page
 def test_a_long_job_that_keeps_writing_stays_active(web, token_headers, sample_report):
     import os
     import time
