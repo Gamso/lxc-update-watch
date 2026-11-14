@@ -187,8 +187,9 @@ notes below).
   and keeping your configuration files (`--force-confold`), with the output in the console. It is refused when the
   list contains a Proxmox or PVE kernel, because the node must then be rebooted and that is better watched from the
   Proxmox interface. Running guests are not stopped, but the Proxmox services (the web interface included) can restart
-  during the upgrade, so the page of Proxmox may blink. The package lists are the ones Proxmox refreshes itself every
-  day; this project never runs `apt-get update`. Set `allow_host_upgrade` to `false` in the collector config to remove
+  during the upgrade, so the page of Proxmox may blink. The daily check reads the package lists Proxmox refreshes
+  itself every day; the upgrade runs `apt-get update` first (a failing repository is reported in the console but does
+  not stop it), then checks again for a kernel. Set `allow_host_upgrade` to `false` in the collector config to remove
   the button. Once it is done, only the host's list is read again (the containers are not checked again).
 - **Last job card.** The results of the last job stay on the page, with its console. *Clear* (once the job is over)
   removes them; more than three successes are folded into one line, failures always stay visible.
@@ -296,6 +297,11 @@ Release process:
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest
+python -m ruff check .
+node --check server/static/app.js
 ```
+
+CI runs the same three checks. The dependencies are pinned to exact versions (`server/requirements.txt`), and
+Dependabot proposes their updates every week.
 
 The tests need no network and no Proxmox: the collector's `pct` calls and the GitHub requests are replaced by fakes.
