@@ -106,6 +106,29 @@ def test_manual_application_errors_are_codes(monkeypatch):
     assert c.app_status("1", {}, "", {})["error"] == "missing_version_source"
 
 
+def fake_os(osid, code, out):
+    def pct_exec(ctid, script, timeout=120):
+        return (0, osid) if "os-release" in script else (code, out)
+    return pct_exec
+
+
+def test_os_updates_parses_apt_and_apk(monkeypatch):
+    monkeypatch.setattr(c, "pct_exec", fake_os("debian", 0, "Inst tzdata [2026e] (2026f Debian:13 [all])"))
+    assert c.os_updates("1") == ("debian", 1, ["tzdata 2026e → 2026f"])
+    monkeypatch.setattr(c, "pct_exec", fake_os("debian", 0, ""))
+    assert c.os_updates("1") == ("debian", 0, [])
+    monkeypatch.setattr(c, "pct_exec", fake_os("alpine", 0, "musl-1.2.5-r1 x86_64 {musl} (MIT) [upgradable from: musl-1.2.5-r0]"))
+    assert c.os_updates("1") == ("alpine", 1, ["musl-1.2.5-r1"])
+
+
+@pytest.mark.parametrize("osid", ["debian", "alpine"])
+def test_os_updates_are_unknown_when_the_lists_cannot_be_refreshed(monkeypatch, osid):
+    monkeypatch.setattr(c, "pct_exec", fake_os(osid, 0, c.OS_CHECK_FAILED))
+    assert c.os_updates("1") == (osid, None, [])
+    monkeypatch.setattr(c, "pct_exec", fake_os(osid, 124, ""))  # timed out
+    assert c.os_updates("1") == (osid, None, [])
+
+
 # ---------------------------------------------------------------- streaming
 
 class Shipper:
