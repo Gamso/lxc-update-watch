@@ -106,6 +106,29 @@ def test_manual_application_errors_are_codes(monkeypatch):
     assert c.app_status("1", {}, "", {})["error"] == "missing_version_source"
 
 
+def fake_os(osid, code, out):
+    def pct_exec(ctid, script, timeout=120):
+        return (0, osid) if "os-release" in script else (code, out)
+    return pct_exec
+
+
+def test_os_updates_parses_apt_and_apk(monkeypatch):
+    monkeypatch.setattr(c, "pct_exec", fake_os("debian", 0, "Inst tzdata [2026e] (2026f Debian:13 [all])"))
+    assert c.os_updates("1") == ("debian", 1, ["tzdata 2026e → 2026f"])
+    monkeypatch.setattr(c, "pct_exec", fake_os("debian", 0, ""))
+    assert c.os_updates("1") == ("debian", 0, [])
+    monkeypatch.setattr(c, "pct_exec", fake_os("alpine", 0, "musl-1.2.5-r1 x86_64 {musl} (MIT) [upgradable from: musl-1.2.5-r0]"))
+    assert c.os_updates("1") == ("alpine", 1, ["musl-1.2.5-r1"])
+
+
+@pytest.mark.parametrize("osid", ["debian", "alpine"])
+def test_os_updates_are_unknown_when_the_lists_cannot_be_refreshed(monkeypatch, osid):
+    monkeypatch.setattr(c, "pct_exec", fake_os(osid, 0, c.OS_CHECK_FAILED))
+    assert c.os_updates("1") == (osid, None, [])
+    monkeypatch.setattr(c, "pct_exec", fake_os(osid, 124, ""))  # timed out
+    assert c.os_updates("1") == (osid, None, [])
+
+
 # ---------------------------------------------------------------- streaming
 
 class Shipper:
@@ -475,7 +498,7 @@ def test_chain_stops_a_container_at_its_first_failure(monkeypatch):
 
 
 def test_a_failure_in_one_container_does_not_stop_the_others(monkeypatch):
-    commands = chain_env(monkeypatch)
+    chain_env(monkeypatch)
     real = c.stream_process
 
     def selective(cmd, prefix, shipper, timeout, env=None):
@@ -500,7 +523,7 @@ def test_chain_needs_the_backup_storage_and_skips_stopped_containers(monkeypatch
 
 
 def test_chain_apps_step_uses_the_official_script_without_its_own_backup(monkeypatch):
-    commands = chain_env(monkeypatch)
+    chain_env(monkeypatch)
     seen = []
     real = c.stream_process
 
@@ -528,6 +551,30 @@ def test_run_job_dispatches_a_chain(monkeypatch):
     monkeypatch.setattr(c, "update_chain", lambda job, config, shipper: calls.append(job["actions"]) or [])
     c.run_job({}, {"id": "j", "action": "update_chain", "actions": ["upgrade_os", "update_docker"], "ctids": []})
     assert calls == [["upgrade_os", "update_docker"]]
+
+
+def test_the_result_of_a_job_is_retried(monkeypatch):
+    attempts = []
+
+    def flaky(config, method, path, body=None, timeout=15):
+        attempts.append(path)
+        if len(attempts) < 3:
+            raise c.urllib.error.URLError("down")
+        return {}
+
+    monkeypatch.setattr(c, "server_call", flaky)
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    assert c.send_result({}, "j", []) is True and len(attempts) == 3
+
+
+def test_a_result_that_cannot_be_delivered_is_not_a_crash(monkeypatch, capsys):
+    def down(*a, **k):
+        raise c.urllib.error.URLError("down")
+
+    monkeypatch.setattr(c, "server_call", down)
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    assert c.send_result({}, "j", []) is False
+    assert "Could not send the result of job j" in capsys.readouterr().err
 
 
 def test_every_request_to_the_service_announces_the_collector_version(monkeypatch):
@@ -581,3 +628,59 @@ def test_an_exception_in_one_container_keeps_the_results_of_the_others():
     results = c.map_containers(work, [(1, "a"), (2, "b"), (3, "c")], 2, shipper)
     assert [r["ok"] for r in results] == [True, False, True]
     assert results[1]["message"] == "internal error: boom" and "[CT 2]" in shipper.text and "finished: failed" in shipper.text
+# ---------------------------------------------------------------- GitHub API
+
+class FakeResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, *args):
+        return self.body.encode()
+
+
+@pytest.fixture
+def github(tmp_path, monkeypatch):
+    """Fake GitHub: `replies` maps a URL fragment to a body or an HTTP status; `calls` lists the URLs requested."""
+    monkeypatch.setattr(c, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(c, "GITHUB_RATE_LIMITED", c.threading.Event())
+    state = {"replies": {}, "calls": []}
+
+    def urlopen(req, timeout=None):
+        state["calls"].append(req.full_url)
+        for fragment, reply in state["replies"].items():
+            if fragment in req.full_url:
+                if isinstance(reply, int):
+                    headers = {"X-RateLimit-Remaining": "0"} if reply == 403 else {}
+                    raise c.urllib.error.HTTPError(req.full_url, reply, "refused", headers, None)
+                return FakeResponse(reply)
+        raise c.urllib.error.URLError("no route")
+
+    monkeypatch.setattr(c.urllib.request, "urlopen", urlopen)
+    return state
+
+
+def test_latest_release_goes_through_the_disk_cache(github):
+    github["replies"]["owner/app/releases/latest"] = '{"tag_name": "v1.2.3"}'
+    assert c.latest_github_release("owner/app", "", {}) == "v1.2.3"
+    assert c.latest_github_release("owner/app", "", {}) == "v1.2.3"   # new run: fresh memory cache, same disk cache
+    assert len(github["calls"]) == 1
+
+
+def test_a_spent_github_quota_is_named_as_the_reason(github, monkeypatch):
+    github["replies"]["api.github.com"] = 403
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, "1.0.0"))
+    app = c.app_status("1", {"name": "App", "version_cmd": "app -v", "repo": "owner/app"}, "", {})
+    assert app["error"] == "github_rate_limited"
+
+
+def test_other_github_failures_keep_the_generic_error(github, monkeypatch):
+    github["replies"]["api.github.com"] = 404
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, "1.0.0"))
+    app = c.app_status("1", {"name": "App", "version_cmd": "app -v", "repo": "owner/app"}, "", {})
+    assert app["error"] == "latest_version_unavailable"
