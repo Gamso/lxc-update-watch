@@ -105,15 +105,29 @@ def host_updates():
 
 # ---------------------------------------------------------------- operating system updates
 
+OS_CHECK_FAILED = "__LXCW_CHECK_FAILED__"
+# Both scripts print OS_CHECK_FAILED when the package lists cannot be refreshed or read: an empty output must only
+# ever mean "nothing to upgrade", never "the mirror was unreachable".
+APT_CHECK_SCRIPT = (
+    f"apt-get update -qq >/dev/null 2>&1 || {{ echo {OS_CHECK_FAILED}; exit 0; }}; "
+    f"out=$(LC_ALL=C apt-get -s upgrade 2>/dev/null) || {{ echo {OS_CHECK_FAILED}; exit 0; }}; "
+    "printf '%s\\n' \"$out\" | grep '^Inst'; true"
+)
+APK_CHECK_SCRIPT = (
+    f"apk update >/dev/null 2>&1 || {{ echo {OS_CHECK_FAILED}; exit 0; }}; "
+    f"apk list -u 2>/dev/null || echo {OS_CHECK_FAILED}"
+)
+
+
 def os_updates(ctid):
+    """(OS id, number of pending packages, package lines). The number is None when it cannot be known: unsupported
+    OS, package lists that could not be refreshed, or a check that timed out."""
     _, osid = pct_exec(ctid, ". /etc/os-release 2>/dev/null; echo \"$ID\"")
     osid = osid or "unknown"
     if osid in ("debian", "ubuntu"):
-        _, out = pct_exec(
-            ctid,
-            "apt-get update -qq >/dev/null 2>&1; apt-get -s upgrade 2>/dev/null | grep '^Inst'",
-            timeout=300,
-        )
+        code, out = pct_exec(ctid, APT_CHECK_SCRIPT, timeout=300)
+        if code != 0 or OS_CHECK_FAILED in out:
+            return osid, None, []
         packages = []
         for line in out.splitlines():
             m = APT_INST_RE.match(line)
@@ -122,7 +136,9 @@ def os_updates(ctid):
                 packages.append(f"{name} {old} → {new}" if old else f"{name} → {new}")
         return osid, len(packages), packages
     if osid == "alpine":
-        _, out = pct_exec(ctid, "apk update >/dev/null 2>&1; apk list -u 2>/dev/null", timeout=300)
+        code, out = pct_exec(ctid, APK_CHECK_SCRIPT, timeout=300)
+        if code != 0 or OS_CHECK_FAILED in out:
+            return osid, None, []
         packages = [line.split()[0] for line in out.splitlines() if line.strip()]
         return osid, len(packages), packages
     return osid, None, []
