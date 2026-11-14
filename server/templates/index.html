@@ -38,7 +38,8 @@
 <p class="sub">{{ t('no_report') }}</p>
 {% else %}
 <div class="bar">
-<p class="sub" id="sub">{{ t('last_check', host=view.host, when=view.checked_at) }}</p>
+{% set check_parts = t('last_check', host=view.host, when='{when}').split('{when}') %}
+<p class="sub" id="sub">{{ check_parts[0] }}<time datetime="{{ view.checked_raw }}">{{ view.checked_at }}</time>{{ check_parts[1] }}</p>
 <div class="side">
 <button id="refresh" type="button">{{ t('check_now') }}</button>
 </div>
