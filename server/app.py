@@ -132,11 +132,25 @@ def json_errors(error):
 
 # ---------------------------------------------------------------- jobs
 
+def job_last_activity(job):
+    """When the job last showed a sign of life: its request, its start, or the last output the collector sent.
+
+    A long job (several backups, many containers) keeps writing to the console, so it is never mistaken for a
+    stuck one; every command it runs has its own timeout, all shorter than JOB_MAX_AGE_H."""
+    times = [datetime.fromisoformat(job[key]) for key in ("requested_at", "started_at") if job.get(key)]
+    if job["status"] == "running":
+        try:
+            times.append(datetime.fromtimestamp(LOG_FILE.stat().st_mtime, timezone.utc))
+        except OSError:
+            pass
+    return max(times)
+
+
 def job_is_active(job):
-    """A pending or running job blocks new requests, unless it is older than JOB_MAX_AGE_H (a stuck job)."""
+    """A pending or running job blocks new requests, unless nothing happened for JOB_MAX_AGE_H (a stuck job)."""
     if not job or job["status"] not in ("pending", "running"):
         return False
-    age = datetime.now(timezone.utc) - datetime.fromisoformat(job["requested_at"])
+    age = datetime.now(timezone.utc) - job_last_activity(job)
     return age.total_seconds() < JOB_MAX_AGE_H * 3600
 
 
