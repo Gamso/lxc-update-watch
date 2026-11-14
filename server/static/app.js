@@ -262,7 +262,7 @@
 
   btn.addEventListener('click', function () {
     btn.disabled = true;
-    fetch('/api/refresh', { method: 'POST' }).then(function (r) {
+    fetch('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function (r) {
       if (!r.ok) throw new Error();
       waiting();
     }).catch(function () { btn.disabled = false; sub.textContent = I18N.request_failed; });

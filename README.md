@@ -112,6 +112,9 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
 | `allow_host_upgrade` | `true` by default; set it to `false` to remove the *Upgrade the host* button (the host's updates are still listed). |
 | `registry_auth` | Credentials for private registries: `{"ghcr.io": {"username": "...", "token": "..."}}`. |
+| `scripts_ref` | Branch, tag or commit of community-scripts the official `update-apps.sh` is downloaded from (default `main`). A commit pins the script the application update runs as root. |
+| `update_apps_sha256` | Optional. SHA-256 the downloaded `update-apps.sh` must have; any other content is refused. The console of every application update shows the hash it ran. |
+| `server_ca_file` | Optional. PEM file of the certificate (or private CA) of an `https` `server_url` that is not signed by a public CA. |
 
 Environment of the web service (`/etc/lxc-update-watch.env`):
 
@@ -202,6 +205,21 @@ output, and can start the update buttons, which run `apt-get upgrade` and the co
 host through the collector. Only the fixed actions of the page can be started, never an arbitrary command, and
 requests must be JSON so a cross-site form cannot trigger one. Either keep the page on your local network, turn on
 the optional OpenID Connect login below, or put an authenticating reverse proxy in front of it.
+
+#### Encrypting the traffic
+
+With an `http://` `server_url`, the collector's token, the reports and the console output cross the network in clear
+text: anyone who can read that traffic can reuse the token to post fake reports or read the jobs. On a trusted LAN
+this may be acceptable; otherwise serve the page over HTTPS:
+
+- behind a reverse proxy (Caddy, nginx, Traefik...) that terminates TLS, then set `server_url` to its `https://`
+  address;
+- or directly with gunicorn: add `--certfile /etc/lxc-update-watch/cert.pem --keyfile /etc/lxc-update-watch/key.pem`
+  to `ExecStart` in `lxc-update-watch.service` and use `https://<address>:8080`.
+
+For a self-signed certificate or a private CA, copy the certificate to the Proxmox host and set `server_ca_file` in
+the collector config. Certificate checks are never turned off. The daily check prints a note in the journal while
+`server_url` is not `https`.
 
 ### Optional login with OpenID Connect
 
