@@ -820,8 +820,33 @@ def map_containers(fn, todo, workers, shipper):
 NO_UPDATE_COMMAND = "stopped, or no update command (container not created by a helper script)"
 
 
-def fetch_update_apps_script():
-    return cached_fetch(f"https://raw.githubusercontent.com/{SCRIPTS_REPO}/main/{UPDATE_APPS_PATH}", 3600)
+SCRIPT_UNAVAILABLE = "official script unavailable or rejected (see the console)"
+
+
+def fetch_update_apps_script(ref="main"):
+    return cached_fetch(f"https://raw.githubusercontent.com/{SCRIPTS_REPO}/{ref}/{UPDATE_APPS_PATH}", 3600)
+
+
+def official_update_script(config, shipper):
+    """The official update script, downloaded from GitHub and run as root on the host: say exactly which one runs.
+
+    `scripts_ref` (a commit, tag or branch of community-scripts, default main) pins the version, and
+    `update_apps_sha256` refuses any other content. Returns None when it cannot be used."""
+    ref = str(config.get("scripts_ref") or "main")
+    if not re.fullmatch(r"[\w.-]+", ref):
+        shipper.write(f"scripts_ref {ref!r} is not a valid branch, tag or commit\n")
+        return None
+    script = fetch_update_apps_script(ref)
+    if not script:
+        shipper.write(f"Could not download {UPDATE_APPS_PATH} at {ref} (network issue?)\n")
+        return None
+    digest = hashlib.sha256(script.encode()).hexdigest()
+    shipper.write(f"Official script {SCRIPTS_REPO}/{UPDATE_APPS_PATH} at {ref}, sha256 {digest}\n")
+    expected = str(config.get("update_apps_sha256") or "").strip().lower()
+    if expected and expected != digest:
+        shipper.write(f"Refused: update_apps_sha256 in the collector config is {expected}\n")
+        return None
+    return script
 
 
 def apps_step(ctid, script, backup_storage, shipper):
@@ -842,9 +867,9 @@ def apps_step(ctid, script, backup_storage, shipper):
 
 def update_apps(job, config, shipper):
     """Run the official "PVE LXC Apps Update" script without interaction, one instance per container."""
-    script = fetch_update_apps_script()
+    script = official_update_script(config, shipper)
     if not script:
-        return [{"label": "update-apps.sh", "ok": False, "message": "official script unavailable (network issue?)"}]
+        return [{"label": "update-apps.sh", "ok": False, "message": SCRIPT_UNAVAILABLE}]
     storage = config.get("backup_storage")
     backup = "update_apps" in backup_actions(job)
     if backup and not storage:
@@ -1060,7 +1085,7 @@ def update_chain(job, config, shipper):
     backed = backup_actions(job) & set(actions)
     if backed and not storage:
         return [{"label": "Backup", "ok": False, "message": "backup_storage is not set in the collector config"}]
-    script = fetch_update_apps_script() if "update_apps" in actions else None
+    script = official_update_script(config, shipper) if "update_apps" in actions else None
     running = {int(c[0]): c[2] for c in list_containers() if c[1] == "running"}
     results, todo = [], []
     for ctid in sorted(set().union(*targets.values())):
@@ -1079,7 +1104,7 @@ def update_chain(job, config, shipper):
             return upgrade_step(ctid, shipper)
         if action == "update_apps":
             if not script:
-                return False, "official script unavailable (network issue?)", ""
+                return False, SCRIPT_UNAVAILABLE, ""
             if pct_exec(ctid, "test -f /usr/bin/update")[0] != 0:
                 return False, NO_UPDATE_COMMAND, NO_UPDATE_COMMAND
             return apps_step(ctid, script, None, shipper)  # the backup, if any, was made before the first backed up step
