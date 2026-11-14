@@ -93,7 +93,7 @@ def test_pending_rows_come_first_with_details(web, token_headers, sample_report)
 # ---------------------------------------------------------------- refresh requests
 
 def test_refresh_request_lifecycle(web, token_headers, sample_report):
-    assert web.post("/api/refresh").status_code == 202
+    assert web.post("/api/refresh", json={}).status_code == 202
     assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
     assert web.get("/api/refresh/pending").status_code == 401
     post_report(web, token_headers, {**sample_report, "started_at": "2999-01-01T00:00:00+00:00"})
@@ -101,7 +101,7 @@ def test_refresh_request_lifecycle(web, token_headers, sample_report):
 
 
 def test_a_request_made_during_a_collection_stays_pending(web, token_headers, sample_report):
-    web.post("/api/refresh")
+    web.post("/api/refresh", json={})
     post_report(web, token_headers, {**sample_report, "started_at": "2000-01-01T00:00:00+00:00"})
     assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
 
@@ -577,3 +577,10 @@ def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report
     post_report(web, token_headers, sample_report)
     refused = web.post("/api/actions", json={"action": "upgrade_os", "backup_system": True})
     assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"
+
+
+def test_a_form_on_another_site_cannot_start_a_check(web):
+    assert web.post("/api/refresh", data="x=1", content_type="application/x-www-form-urlencoded").status_code == 400
+    assert web.post("/api/refresh", data="").status_code == 400
+    assert web.get("/api/status").get_json()["refreshing"] is False
+    assert web.post("/api/refresh", json={}).status_code == 202
