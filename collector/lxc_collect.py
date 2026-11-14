@@ -60,8 +60,20 @@ def run(cmd, timeout=120):
     return p.returncode, p.stdout.strip()
 
 
+# Run "$@" under `timeout` inside the container when it has one ($0 is the number of seconds). Killing `pct exec` on
+# the host does not reliably stop what it started in the container (a hung apt or docker pull would keep running
+# and keep its locks), so the limit is enforced in the container itself.
+TIMEOUT_GUARD = 'if command -v timeout >/dev/null 2>&1; then exec timeout "$0" "$@"; fi; exec "$@"'
+HOST_TIMEOUT_MARGIN = 30   # the host only kills `pct exec` if the container's own timeout did not end it first
+
+
+def in_container(ctid, argv, seconds):
+    """Command line running `argv` in container `ctid`, stopped there after `seconds` (exit code 124)."""
+    return ["pct", "exec", str(ctid), "--", "sh", "-c", TIMEOUT_GUARD, str(int(seconds)), *argv]
+
+
 def pct_exec(ctid, script, timeout=120):
-    return run(["pct", "exec", str(ctid), "--", "sh", "-c", script], timeout)
+    return run(in_container(ctid, ["sh", "-c", script], timeout), timeout + HOST_TIMEOUT_MARGIN)
 
 
 def list_containers():
@@ -704,8 +716,8 @@ def stream_process(cmd, prefix, shipper, timeout, env=None):
 
 def upgrade_step(ctid, shipper):
     """Upgrade the system packages of one LXC (plain upgrade, never dist-upgrade); returns (ok, message, note)."""
-    code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", UPGRADE_SCRIPT],
-                                   f"[CT {ctid}] ", shipper, 1800)
+    code, last, _ = stream_process(in_container(ctid, ["sh", "-c", UPGRADE_SCRIPT], 1800),
+                                   f"[CT {ctid}] ", shipper, 1800 + HOST_TIMEOUT_MARGIN)
     if code == 124:
         return False, "timed out after 30 minutes", "timed out after 30 minutes"
     return code == 0, last[:200], ""
@@ -895,8 +907,8 @@ def docker_step(ctid, job, shipper):
     failed = []
     for stack in stacks:
         shipper.write(f"{prefix}== stack {stack['project']} ({', '.join(stack['containers'])}) ==\n")
-        code, _, _ = stream_process(["pct", "exec", str(ctid), "--", "sh", "-c", compose_script(stack)],
-                                    prefix, shipper, 3600)
+        code, _, _ = stream_process(in_container(ctid, ["sh", "-c", compose_script(stack)], 3600),
+                                    prefix, shipper, 3600 + HOST_TIMEOUT_MARGIN)
         if code != 0:
             failed.append(stack["project"])
             shipper.write(f"{prefix}stack {stack['project']} failed (exit code {code})\n")
@@ -905,8 +917,8 @@ def docker_step(ctid, job, shipper):
 
     summary = f"{len(stacks)} stack(s) updated"
     if job.get("cleanup"):  # only dangling images: the ones the pull left without a name and nothing uses
-        code, last, _ = stream_process(["pct", "exec", str(ctid), "--", "docker", "image", "prune", "-f"],
-                                       prefix, shipper, 900)
+        code, last, _ = stream_process(in_container(ctid, ["docker", "image", "prune", "-f"], 900),
+                                       prefix, shipper, 900 + HOST_TIMEOUT_MARGIN)
         summary += f", {last}" if code == 0 and last else ", image cleanup failed" if code else ""
     if unmanaged:
         summary += f"; {len(unmanaged)} container(s) not managed by Compose"
