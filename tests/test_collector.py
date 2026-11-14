@@ -610,6 +610,83 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
 
 
+# ---------------------------------------------------------------- console output of the jobs
+
+def log_shipper(monkeypatch, outcome):
+    sent = []
+
+    def fake_call(config, method, path, body=None, timeout=15):
+        if outcome:
+            raise outcome[0]
+        sent.append(body["text"])
+
+    monkeypatch.setattr(c, "server_call", fake_call)
+    shipper = c.LogShipper({}, "j")
+    shipper.stop.set()            # no background flush: the test drives it
+    shipper.thread.join()
+    return shipper, sent
+
+
+def test_log_shipper_keeps_the_output_while_the_service_is_down(monkeypatch):
+    outcome = [OSError("down")]
+    shipper, sent = log_shipper(monkeypatch, outcome)
+    shipper.write("one\n")
+    shipper._flush()
+    shipper.write("two\n")
+    outcome.clear()
+    shipper._flush()
+    assert sent == ["one\ntwo\n"]
+
+
+def test_log_shipper_memory_is_bounded(monkeypatch):
+    shipper, _ = log_shipper(monkeypatch, [OSError("down")])
+    monkeypatch.setattr(c.LogShipper, "MAX_PENDING_CHARS", 200)
+    for i in range(50):
+        shipper.write(f"line {i:03}\n")
+        shipper._flush()
+    waiting = "".join(shipper.pending)
+    assert len(waiting) <= 200 and "dropped" in waiting and waiting.endswith("line 049\n")
+
+
+def test_log_shipper_drops_output_of_a_job_the_service_forgot(monkeypatch):
+    gone = c.urllib.error.HTTPError("http://x", 404, "unknown job", {}, None)
+    shipper, _ = log_shipper(monkeypatch, [gone])
+    shipper.write("late\n")
+    shipper._flush()
+    assert shipper.pending == []
+# ---------------------------------------------------------------- one container must not break the others
+
+def test_a_container_whose_check_crashes_does_not_stop_the_report(monkeypatch, capsys):
+    def collect(entry, config, cache, progress=None):
+        if entry[0] == "101":
+            raise ValueError("bad version_regex")
+        return {"ctid": int(entry[0]), "name": entry[2], "status": "running", "os_updates": 0}
+
+    events = []
+
+    class Progress:
+        def event(self, **fields):
+            events.append(fields)
+
+    monkeypatch.setattr(c, "collect_one", collect)
+    assert c.safe_collect_one(("100", "running", "a"), {}, {})["os_updates"] == 0
+    broken = c.safe_collect_one(("101", "running", "b"), {}, {}, Progress())
+    assert broken["ctid"] == 101 and broken["os_updates"] is None and "bad version_regex" in broken["error"]
+    assert {(e["step"], e["state"]) for e in events} == {("system", "done"), ("app", "done"), ("docker", "done")}
+    assert "CT 101: check failed" in capsys.readouterr().err
+
+
+def test_an_exception_in_one_container_keeps_the_results_of_the_others():
+    shipper = Shipper()
+
+    def work(item):
+        if item[0] == 2:
+            raise RuntimeError("boom")
+        return {"label": f"CT {item[0]} {item[1]}", "ok": True, "message": ""}
+
+    results = c.map_containers(work, [(1, "a"), (2, "b"), (3, "c")], 2, shipper)
+    assert [r["ok"] for r in results] == [True, False, True]
+    assert results[1]["message"] == "internal error: boom" and "[CT 2]" in shipper.text and "finished: failed" in shipper.text
 # ---------------------------------------------------------------- GitHub API
 
 class FakeResponse:
