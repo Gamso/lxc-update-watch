@@ -546,3 +546,20 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
+
+
+# ---------------------------------------------------------------- Docker images
+
+def test_docker_list_reads_the_image_each_container_really_runs():
+    # The name comes from the container's config and the digests from the image ID it runs, not from the tag,
+    # which may already point to a newer image pulled but not yet used.
+    assert "{{.Config.Image}}|{{.Image}}" in c.DOCKER_LIST_SCRIPT
+    assert '"$imgid"' in c.DOCKER_LIST_SCRIPT and "docker ps --format" not in c.DOCKER_LIST_SCRIPT
+
+
+def test_an_image_pulled_again_but_not_restarted_is_an_update(monkeypatch):
+    old = "sha256:" + "a" * 64
+    new = "sha256:" + "b" * 64
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, f'nginx:latest\t["nginx@{old}"]'))
+    monkeypatch.setattr(c, "registry_digest", lambda registry, repo, tag, auth, cache: new)
+    assert c.docker_status("1", {}, {}) == [{"image": "nginx:latest", "update": True}]

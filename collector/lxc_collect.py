@@ -289,10 +289,14 @@ MANIFEST_ACCEPT = ", ".join([
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ])
+# One line per running image: <name it was started from>\t<RepoDigests of the image the container really runs>.
+# `docker ps --format {{.Image}}` is not enough: once the tag has been pulled again (a newer image downloaded but the
+# container not recreated), it prints the bare image ID, and the running image could no longer be compared.
 DOCKER_LIST_SCRIPT = (
     "command -v docker >/dev/null 2>&1 || exit 0; "
-    "docker ps --format '{{.Image}}' 2>/dev/null | sort -u | while read -r img; do "
-    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$img\" 2>/dev/null || echo '[]'; "
+    "for id in $(docker ps -q 2>/dev/null); do docker inspect -f '{{.Config.Image}}|{{.Image}}' \"$id\"; done "
+    "| sort -u | while IFS='|' read -r img imgid; do "
+    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$imgid\" 2>/dev/null || echo '[]'; "
     "done"
 )
 
