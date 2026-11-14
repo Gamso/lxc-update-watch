@@ -30,6 +30,21 @@ def test_version_helpers():
     assert c.parse_version("v1.37.3") == "1.37.3"
     assert c.parse_version("no version here") is None
     assert c.version_key("1.10.0") > c.version_key("1.9.9")
+
+
+@pytest.mark.parametrize("latest, installed, newer", [
+    ("1.2.0", "1.2", False),          # same version, written differently
+    ("1.2", "1.2.0", False),
+    ("v1.3", "1.2.9", True),
+    ("2.0.0", "2.0.0-rc1", True),     # the release follows its release candidate
+    ("2.0.0-rc2", "2.0.0-rc1", True),
+    ("2.0.0-rc1", "2.0.0", False),
+    ("1.2.3-2", "1.2.3-1", True),     # packaging revision
+    ("1.2.3", "1.2.4", False),        # never "update" to an older version
+    ("abc", "def", True),             # not comparable: any difference counts
+])
+def test_is_newer(latest, installed, newer):
+    assert c.is_newer(latest, installed) is newer
     assert c.strip_v("v1.2") == "1.2" and c.strip_v("verbose") == "verbose"
 
 

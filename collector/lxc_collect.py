@@ -137,11 +137,29 @@ def parse_version(text, pattern=None):
     return (m.group(1) if m.groups() else m.group(0)).lstrip("v")
 
 
+PRE_TAG_RE = re.compile(r"alpha|beta|rc|pre|dev|nightly|snapshot", re.IGNORECASE)
+
+
 def version_key(version):
-    try:
-        return tuple(int(x) for x in re.split(r"[.-]", version.split("+")[0]) if x.isdigit())
-    except ValueError:
+    """Sortable key of a version, () when there is no number to compare.
+
+    1.2 and 1.2.0 are the same version; a pre-release (2.0.0-rc1) comes before its release (2.0.0); a packaging
+    revision (1.2.3-2) comes after 1.2.3-1."""
+    m = re.match(r"v?(\d+(?:\.\d+)*)(.*)", (version or "").split("+")[0])
+    if not m:
         return ()
+    numbers = [int(x) for x in m.group(1).split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    rest = m.group(2)
+    stage = 0 if PRE_TAG_RE.search(rest) else 1
+    return tuple(numbers), stage, tuple(int(x) for x in re.findall(r"\d+", rest))
+
+
+def is_newer(latest, installed):
+    """True when `latest` is a newer version than `installed` (plain inequality when they cannot be compared)."""
+    a, b = version_key(installed), version_key(latest)
+    return b > a if a and b else installed != latest
 
 
 def strip_v(version):
@@ -255,9 +273,8 @@ def app_status(ctid, app_cfg, github_token, cache):
     latest = parse_version(tag, app_cfg.get("version_regex")) if tag else None
     if not latest:
         return {"name": name, "installed": installed, "error": "latest_version_unavailable"}
-    a, b = version_key(installed), version_key(latest)
-    update = b > a if a and b else installed != latest
-    result = {"name": name, "installed": installed, "latest": latest, "update": update, "source": source}
+    result = {"name": name, "installed": installed, "latest": latest, "update": is_newer(latest, installed),
+              "source": source}
     if app_cfg.get("update_cmd"):
         result["update_cmd"] = app_cfg["update_cmd"]
     return result
@@ -467,7 +484,7 @@ def auto_app_status(ctid, name, config, cache):
             tag = release_target(comp, token)
             target = strip_v(tag) if tag else None
             found.append({"name": comp["name"], "installed": current, "latest": target,
-                          "update": bool(target) and current != target,
+                          "update": bool(target) and is_newer(target, current),
                           "error": None if target else "target_version_unavailable"})
         if not found:
             continue  # the host name looks like this script but nothing from it is installed here
