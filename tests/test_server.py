@@ -28,7 +28,7 @@ def test_the_first_check_can_be_asked_from_the_page(web):
     page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
     assert 'id="refresh"' in page and "Check now" in page and "app.js" in page
     assert '"lastCheck": null' in page and '"refreshing": false' in page
-    assert web.post("/api/refresh").status_code == 202
+    assert web.post("/api/refresh", json={}).status_code == 202
     assert '"refreshing": true' in web.get("/").get_data(as_text=True)   # the page keeps waiting after a reload
 
 
