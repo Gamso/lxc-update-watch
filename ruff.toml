@@ -1,0 +1,8 @@
+# Lint rules checked by CI (python -m ruff check .).
+target-version = "py313"
+line-length = 120
+
+[lint]
+# pyflakes, pycodestyle, bugbear. Long lines are a style choice of this project, not an error.
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]
