@@ -892,7 +892,16 @@ def upgrade_host(job, config, shipper):
     label = "Proxmox host"
     if not config.get("allow_host_upgrade", True):
         return [{"label": label, "ok": False, "message": "allow_host_upgrade is false in the collector config"}]
-    current = host_updates()   # read again: the list may have changed since the page was built
+    # Refresh the lists first, like the Refresh button of the Updates panel: lists up to a day old can point to
+    # package versions the mirror no longer has. A repository that fails (an enterprise repository without a
+    # subscription, a mirror down) is not a reason to stop: the upgrade then works with the lists it has.
+    shipper.write("[PVE] Refreshing the package lists (apt-get update)\n")
+    code, out = run(["env", "LC_ALL=C", "apt-get", "update"], timeout=600)
+    if code != 0:
+        problems = [line for line in out.splitlines() if line.startswith(("E:", "W:", "Err:"))][-3:]
+        shipper.write("[PVE] apt-get update reported errors, continuing with the lists as they are"
+                      + "".join(f"\n[PVE]   {line}" for line in problems) + "\n")
+    current = host_updates()   # read again: the list may have changed since the page was built, kernel included
     if "error" in current:
         return [{"label": label, "ok": False, "message": "could not read the host updates (apt-get failed)"}]
     if not current["count"]:
