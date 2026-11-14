@@ -112,6 +112,8 @@ The collector reads `/etc/lxc-update-watch.json` (override with `LXC_WATCH_CONFI
 | `docker_update_workers` | Containers whose Docker stacks are updated in parallel by the Docker update button (default 2). |
 | `allow_host_upgrade` | `true` by default; set it to `false` to remove the *Upgrade the host* button (the host's updates are still listed). |
 | `registry_auth` | Credentials for private registries: `{"ghcr.io": {"username": "...", "token": "..."}}`. |
+| `scripts_ref` | Branch, tag or commit of community-scripts the official `update-apps.sh` is downloaded from (default `main`). A commit pins the script the application update runs as root. |
+| `update_apps_sha256` | Optional. SHA-256 the downloaded `update-apps.sh` must have; any other content is refused. The console of every application update shows the hash it ran. |
 
 Environment of the web service (`/etc/lxc-update-watch.env`):
 

