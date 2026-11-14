@@ -8,7 +8,10 @@ and can apply them from the page, with a live console and an optional backup fir
 
 - Detects updates for containers created by the [community-scripts](https://github.com/community-scripts/ProxmoxVE)
   helper scripts with **no configuration**: it reads the scripts themselves and applies the same rule they do.
-- Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest.
+- Docker images (Docker Hub, ghcr.io, quay.io, private registries) are compared with the registry digest, and a
+  versioned tag (`1.2.1`, `v2.0`, `16-alpine`) is compared with the registry's tags of the same shape to spot a new
+  version published under a new tag (`1.2.2`). Not for containers of a helper script: its `update` command decides
+  which version runs. Every image is listed with its name and version.
 - Updates: system packages, applications (official *PVE LXC Apps Update* script) and Docker Compose stacks, one or
   several in one go (optional `vzdump` backup first).
 - Proxmox host: the packages `apt-get dist-upgrade` would install on the node itself (the *Updates* panel of the
@@ -185,6 +188,8 @@ notes below).
   then runs `docker image prune -f` once every stack succeeded, which only removes images that no longer have a name
   and are used by no container (never `-a`, never volumes). *Back up before updating applications and Docker stacks*
   applies here too. Beware of mobile tags such as `latest` on databases: a new major version can need a migration.
+  A version published under a new tag (`1.2.1 → 1.2.2`) is not pulled by this button: change the tag in the compose
+  file first, then run `docker compose up -d` (the details of the row say so).
 - **Upgrade the host** (button of the *Proxmox host* section) runs `apt-get dist-upgrade` on the node, non-interactive
   and keeping your configuration files (`--force-confold`), with the output in the console. It is refused when the
   list contains a Proxmox or PVE kernel, because the node must then be rebooted and that is better watched from the

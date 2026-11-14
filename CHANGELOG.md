@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- A Docker image with a versioned tag is compared with the registry's tags of the same shape: a new version published
+  under a new tag (`ghcr.io/o/app:1.2.1` → `1.2.2`) is now reported. Containers of a helper script are left out, since
+  their `update` command decides which version runs.
+- The application column lists every Docker image with its name and version (the `org.opencontainers.image.version`
+  label for a tag such as `latest`), instead of a count.
+
 ## [0.5.0] - 2026-11-14
 
 ### Added

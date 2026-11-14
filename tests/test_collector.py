@@ -748,6 +748,44 @@ def test_an_image_pulled_again_but_not_restarted_is_an_update(monkeypatch):
     monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, f'nginx:latest\t["nginx@{old}"]'))
     monkeypatch.setattr(c, "registry_digest", lambda registry, repo, tag, auth, cache: new)
     assert c.docker_status("1", {}, {}) == [{"image": "nginx:latest", "update": True}]
+
+
+def test_newer_tag_keeps_the_shape_of_the_running_tag():
+    tags = ["1.2.0", "1.2.1", "1.2.2", "1.10.0", "1.3.0-rc1", "2.0", "latest", "v9.9.9", "1.2.3-alpine", "01.9.9"]
+    assert c.newer_tag("1.2.1", tags) == "1.10.0"
+    assert c.newer_tag("1.10.0", tags) is None
+    assert c.newer_tag("1.2.1-alpine", tags) == "1.2.3-alpine"
+    assert c.newer_tag("v1.0.0", tags) == "v9.9.9"
+    assert c.newer_tag("1.0", tags) == "2.0"
+    assert c.newer_tag("latest", tags) is None and c.newer_tag("1.2.1", None) is None
+
+
+def kresus(monkeypatch):
+    digest = "sha256:" + "a" * 64
+    name = "ghcr.io/gamso/kresus_docker"
+    monkeypatch.setattr(c, "pct_exec", lambda *a, **k: (0, f'{name}:1.2.1\t["{name}@{digest}"]\t1.2.1\n'))
+    monkeypatch.setattr(c, "registry_digest", lambda *a: digest)
+    monkeypatch.setattr(c, "registry_tags", lambda registry, repo, auth, cache: ["1.2.0", "1.2.1", "1.2.2"])
+
+
+def test_a_new_version_under_a_new_tag_is_reported(monkeypatch):
+    kresus(monkeypatch)
+    assert c.docker_status("1", {}, {}) == [{"image": "ghcr.io/gamso/kresus_docker:1.2.1", "version": "1.2.1",
+                                             "update": False, "latest_tag": "1.2.2"}]
+
+
+def test_a_helper_script_container_does_not_get_newer_tags(monkeypatch):
+    # Its `update` command decides which version runs: a tag it does not support yet is not an update.
+    kresus(monkeypatch)
+    assert "latest_tag" not in c.docker_status("1", {}, {}, False)[0]
+
+
+def test_registry_tags_follow_the_pagination(monkeypatch):
+    pages = {"https://ghcr.io/v2/o/app/tags/list?n=1000": ({"Link": '</v2/o/app/tags/list?last=b&n=1000>; rel="next"'},
+                                                           b'{"tags": ["a", "b"]}'),
+             "https://ghcr.io/v2/o/app/tags/list?last=b&n=1000": ({}, b'{"tags": ["c"]}')}
+    monkeypatch.setattr(c, "registry_request", lambda registry, repo, url, auth, cache, **k: pages[url])
+    assert c.registry_tags("ghcr.io", "o/app", {}, {}) == ["a", "b", "c"]
 # ---------------------------------------------------------------- console output of the jobs
 
 def log_shipper(monkeypatch, outcome):

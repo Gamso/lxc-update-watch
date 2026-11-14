@@ -78,10 +78,23 @@ def test_collector_error_codes_are_shown_translated(web, token_headers, sample_r
     assert "registre injoignable ou privé" in french
 
 
-def test_local_docker_images_are_not_counted(web, token_headers, sample_report):
+def test_every_docker_image_is_shown_with_its_version(web, token_headers, sample_report):
+    sample_report["containers"][1]["docker"][0]["version"] = "2.15.3"   # 'latest' shows the image's version label
     post_report(web, token_headers, sample_report)
     page = web.get("/").get_data(as_text=True)
-    assert "1/3 Docker image to update" in page and "mybuild:dev" not in page
+    assert 'title="paperless-ngx:latest">paperless-ngx 2.15.3: new image<' in page
+    assert 'title="redis:7">redis 7<' in page and "mybuild dev (local)" in page
+    assert "app 1: registry unreachable or private" in page
+
+
+def test_a_newer_tag_is_pending_but_not_a_compose_pull(web, token_headers, sample_report):
+    sample_report["containers"][1]["docker"] = [
+        {"image": "ghcr.io/gamso/kresus_docker:1.2.1", "update": False, "latest_tag": "1.2.2"}]
+    post_report(web, token_headers, sample_report)
+    page = web.get("/").get_data(as_text=True)
+    assert "kresus_docker 1.2.1 → 1.2.2" in page and "change the tag in the compose file" in page
+    assert '<details class="row" data-ctid="101">' in page      # listed with the pending updates
+    assert "Update Docker stacks (0)" in page                    # `docker compose pull` would not bring it
 
 
 def test_versions_are_shown_and_a_mismatch_is_flagged(web, token_headers, sample_report):
@@ -260,7 +273,7 @@ def test_application_badges_wait_for_the_docker_step_before_the_placeholder(web,
     assert web.get("/api/progress").get_json()["containers"]["100"]["apps"] == []  # no "not tracked" flash yet
     progress(web, token_headers, "run-1", step(100, "docker", "done"))
     container = web.get("/api/progress").get_json()["containers"]["100"]
-    assert container["apps"] == [{"text": "App not tracked", "kind": "n"}] and container["pending"] is False
+    assert container["apps"] == [{"text": "App not tracked", "kind": "n", "title": "App not tracked"}] and container["pending"] is False
 
 
 def test_finished_containers_with_updates_are_flagged_and_translated(web, token_headers):
