@@ -121,6 +121,23 @@ def require_token():
         api_error(401, "unauthorized", "invalid token")
 
 
+SECURITY_HEADERS = {
+    # The page starts updates as root with a single click: it must never be shown inside another site's frame,
+    # where a visitor could be tricked into clicking its buttons (clickjacking).
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
+@app.after_request
+def security_headers(response):
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 @app.errorhandler(HTTPException)
 def json_errors(error):
     if error.response is not None:

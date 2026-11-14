@@ -577,3 +577,11 @@ def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report
     post_report(web, token_headers, sample_report)
     refused = web.post("/api/actions", json={"action": "upgrade_os", "backup_system": True})
     assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"
+
+
+def test_the_page_cannot_be_framed_by_another_site(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    for path in ("/", "/api/status", "/healthz"):
+        headers = web.get(path).headers
+        assert headers["X-Frame-Options"] == "DENY" and "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+        assert headers["X-Content-Type-Options"] == "nosniff"
