@@ -2,7 +2,7 @@
 import base64
 import hashlib
 import threading
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import pytest
 import requests
@@ -12,7 +12,6 @@ from flask import Flask, jsonify, redirect, request
 from werkzeug.serving import make_server
 
 import auth
-from conftest import TOKEN
 
 CLIENT_ID, CLIENT_SECRET = "lxc-update-watch", "s3cret"
 
