@@ -595,6 +595,39 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
 
 
+# ---------------------------------------------------------------- one container must not break the others
+
+def test_a_container_whose_check_crashes_does_not_stop_the_report(monkeypatch, capsys):
+    def collect(entry, config, cache, progress=None):
+        if entry[0] == "101":
+            raise ValueError("bad version_regex")
+        return {"ctid": int(entry[0]), "name": entry[2], "status": "running", "os_updates": 0}
+
+    events = []
+
+    class Progress:
+        def event(self, **fields):
+            events.append(fields)
+
+    monkeypatch.setattr(c, "collect_one", collect)
+    assert c.safe_collect_one(("100", "running", "a"), {}, {})["os_updates"] == 0
+    broken = c.safe_collect_one(("101", "running", "b"), {}, {}, Progress())
+    assert broken["ctid"] == 101 and broken["os_updates"] is None and "bad version_regex" in broken["error"]
+    assert {(e["step"], e["state"]) for e in events} == {("system", "done"), ("app", "done"), ("docker", "done")}
+    assert "CT 101: check failed" in capsys.readouterr().err
+
+
+def test_an_exception_in_one_container_keeps_the_results_of_the_others():
+    shipper = Shipper()
+
+    def work(item):
+        if item[0] == 2:
+            raise RuntimeError("boom")
+        return {"label": f"CT {item[0]} {item[1]}", "ok": True, "message": ""}
+
+    results = c.map_containers(work, [(1, "a"), (2, "b"), (3, "c")], 2, shipper)
+    assert [r["ok"] for r in results] == [True, False, True]
+    assert results[1]["message"] == "internal error: boom" and "[CT 2]" in shipper.text and "finished: failed" in shipper.text
 # ---------------------------------------------------------------- GitHub API
 
 class FakeResponse:
