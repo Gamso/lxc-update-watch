@@ -248,3 +248,32 @@ def test_only_the_host_part_of_the_report_is_replaced(web, token_headers, sample
 def test_the_host_list_cannot_be_sent_before_any_report(web, token_headers):
     response = web.post("/api/report/host", json={"count": 0}, headers=token_headers)
     assert response.status_code == 400 and response.get_json()["code"] == "no_report"
+
+
+def test_the_lists_are_refreshed_before_the_upgrade_and_read_again(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, timeout=120):
+        calls.append(cmd[-1])
+        if cmd[-1] == "update":
+            return 0, ""
+        return 0, APT_OUTPUT    # after the refresh a kernel shows up: it must be noticed
+
+    monkeypatch.setattr(c, "run", fake_run)
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (0, "", False))
+    results = c.upgrade_host({}, {}, Shipper())
+    assert calls == ["update", "dist-upgrade"] and "kernel" in results[0]["message"]
+
+
+def test_a_failing_list_refresh_does_not_stop_the_upgrade(monkeypatch):
+    shipper = Shipper()
+
+    def fake_run(cmd, timeout=120):
+        if cmd[-1] == "update":
+            return 100, "Err:1 https://enterprise.proxmox.com/debian/pve trixie InRelease\n  401 Unauthorized"
+        return 0, NO_KERNEL
+
+    monkeypatch.setattr(c, "run", fake_run)
+    monkeypatch.setattr(c, "stream_process", lambda *a, **k: (0, "", False))
+    results = c.upgrade_host({}, {}, shipper)
+    assert results[0]["ok"] is True and "continuing" in shipper.text and "enterprise.proxmox.com" in shipper.text
