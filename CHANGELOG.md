@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-14
+
 ### Added
 - *Update Docker stacks* installs a version published under a new tag (`1.2.1 → 1.2.2`): it writes the newest tag of
   the same major version in the compose files (a `.lxc-update-watch.bak` copy is kept, and put back if the pull or the
@@ -173,7 +175,8 @@ First public release.
 - Project versioning (`VERSION`, changelog, versions shown in the page footer, in the report and by `deploy.ps1`)
   and an automated test suite.
 
-[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Gamso/lxc-update-watch/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Gamso/lxc-update-watch/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Gamso/lxc-update-watch/compare/v0.3.1...v0.4.0
