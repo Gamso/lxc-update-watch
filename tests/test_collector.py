@@ -81,7 +81,8 @@ def helper_script_env(monkeypatch):
 
 def fake_container(files):
     def pct_exec(ctid, script, timeout=120):
-        wanted = script.split("for f in ", 1)[1].split(";", 1)[0].split()
+        import shlex
+        wanted = shlex.split(script.split("for f in ", 1)[1].split("; do", 1)[0])
         return 0, "\n".join(f"{path}\t{files[path]}" for path in wanted if path in files)
     return pct_exec
 
@@ -610,6 +611,28 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
 
 
+# ---------------------------------------------------------------- values put into container shell commands
+
+@pytest.mark.skipif(__import__("shutil").which("sh") is None or __import__("shutil").which("id") is None,
+                    reason="needs a POSIX shell")
+def test_names_from_a_downloaded_script_cannot_run_commands(monkeypatch, tmp_path):
+    import subprocess
+    scripts = []
+    monkeypatch.setattr(c, "script_index", lambda config, cache: {"evil": [("ct", "evil", "ct/evil.sh")]})
+    monkeypatch.setattr(c, "cached_fetch", lambda *a, **k: 'check_for_gh_release "x`>pwned`" "o/r"')
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: scripts.append(script) or (0, ""))
+    assert c.auto_app_status("1", "evil", {}, {}) is None
+    subprocess.run(["sh", "-c", scripts[0]], cwd=tmp_path, capture_output=True)
+    assert not (tmp_path / "pwned").exists()     # unquoted, the backquotes would have created this file
+
+
+def test_config_values_are_quoted_in_container_commands(monkeypatch):
+    scripts = []
+    monkeypatch.setattr(c, "pct_exec", lambda ctid, script, timeout=120: scripts.append(script) or (0, ""))
+    c.app_status("1", {"version_file": "/opt/my app/VERSION; reboot"}, "", {})
+    c.apt_app_status("1", {"apt_package": "pkg; reboot"}, [])
+    assert scripts[0] == "cat '/opt/my app/VERSION; reboot'"
+    assert "'pkg; reboot'" in scripts[1]
 # ---------------------------------------------------------------- the official update script
 
 def test_the_official_script_is_named_with_its_version_and_hash(monkeypatch):

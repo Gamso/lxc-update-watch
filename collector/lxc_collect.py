@@ -298,7 +298,7 @@ def app_status(ctid, app_cfg, github_token, cache):
     """Compare the installed version with the GitHub release (or the version a helper script pins)."""
     name = app_cfg.get("name", f"CT {ctid}")
     if "version_file" in app_cfg:
-        _, raw = pct_exec(ctid, f"cat {app_cfg['version_file']}")
+        _, raw = pct_exec(ctid, f"cat {shlex.quote(app_cfg['version_file'])}")
     elif "version_cmd" in app_cfg:
         _, raw = pct_exec(ctid, app_cfg["version_cmd"])
     else:
@@ -334,7 +334,7 @@ def apt_app_status(ctid, app_cfg, packages):
             result = {"name": name, "installed": m.group(2) or "?", "latest": m.group(3), "update": True}
             break
     else:
-        _, installed = pct_exec(ctid, f"dpkg-query -W -f='${{Version}}' {pkg} 2>/dev/null")
+        _, installed = pct_exec(ctid, f"dpkg-query -W -f='${{Version}}' {shlex.quote(pkg)} 2>/dev/null")
         if not installed:
             return {"name": name, "error": "package_not_installed"}
         result = {"name": name, "installed": installed, "latest": installed, "update": False}
@@ -522,7 +522,8 @@ def auto_app_status(ctid, name, config, cache):
         if not components:
             continue
         files = {c["name"]: "/root/." + c["name"].lower().replace(" ", "") for c in components}
-        probe = " ".join(files.values())
+        # The names come from a script downloaded from GitHub: quoted, they can only ever be file names.
+        probe = " ".join(shlex.quote(path) for path in files.values())
         _, out = pct_exec(ctid, f"for f in {probe}; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"$f\" \"$(head -c 120 \"$f\")\"; done; true")
         installed = dict(line.split("\t", 1) for line in out.splitlines() if "\t" in line)
         found = []
