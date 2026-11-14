@@ -209,7 +209,7 @@
     var node = document.createElement('span');
     node.className = 'b ' + item.kind + ' pop';
     node.textContent = item.text;
-    node.title = item.text;
+    node.title = item.title || item.text;
     return node;
   }
   function checkingNode(label) {

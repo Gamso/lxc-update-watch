@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -353,16 +354,21 @@ MANIFEST_ACCEPT = ", ".join([
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ])
-# One line per running image: <name it was started from>\t<RepoDigests of the image the container really runs>.
-# `docker ps --format {{.Image}}` is not enough: once the tag has been pulled again (a newer image downloaded but the
-# container not recreated), it prints the bare image ID, and the running image could no longer be compared.
+# One line per running image: <name it was started from>\t<RepoDigests of the image the container really runs>\t
+# <its org.opencontainers.image.version label>. `docker ps --format {{.Image}}` is not enough: once the tag has been
+# pulled again (a newer image downloaded but the container not recreated), it prints the bare image ID, and the running
+# image could no longer be compared.
 DOCKER_LIST_SCRIPT = (
     "command -v docker >/dev/null 2>&1 || exit 0; "
     "for id in $(docker ps -q 2>/dev/null); do docker inspect -f '{{.Config.Image}}|{{.Image}}' \"$id\"; done "
     "| sort -u | while IFS='|' read -r img imgid; do "
-    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$imgid\" 2>/dev/null || echo '[]'; "
+    "d=$(docker image inspect -f '{{json .RepoDigests}}' \"$imgid\" 2>/dev/null) || d='[]'; "
+    "v=$(docker image inspect -f '{{index .Config.Labels \"org.opencontainers.image.version\"}}' \"$imgid\" "
+    "2>/dev/null) || v=''; "
+    "printf '%s\\t%s\\t%s\\n' \"$img\" \"$d\" \"$v\"; "
     "done"
 )
+TAG_PAGES = 10   # pages of 1000 tags read at most per repository
 
 
 def parse_image(image):
@@ -383,52 +389,118 @@ def parse_image(image):
     return registry, repo, tag, name
 
 
+def registry_request(registry, repo, url, auth, cache, method="GET", accept=None):
+    """(headers, body) of a registry API call, with an anonymous or configured token (reused for the repository)."""
+    headers = {"User-Agent": USER_AGENT}
+    if accept:
+        headers["Accept"] = accept
+    token_key = ("token", registry, repo)
+    if cache.get(token_key):
+        headers["Authorization"] = cache[token_key]
+    for _ in range(2):
+        req = urllib.request.Request(url, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.headers, resp.read() if method == "GET" else b""
+        except urllib.error.HTTPError as e:
+            challenge = e.headers.get("WWW-Authenticate", "")
+            if e.code != 401 or not challenge.startswith("Bearer ") or "Authorization" in headers:
+                raise
+            params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+            token_req = urllib.request.Request(
+                f"{params['realm']}?service={params.get('service', '')}&scope=repository:{repo}:pull",
+                headers={"User-Agent": USER_AGENT},
+            )
+            creds = auth.get(registry)
+            if creds:
+                basic = base64.b64encode(f"{creds['username']}:{creds['token']}".encode()).decode()
+                token_req.add_header("Authorization", f"Basic {basic}")
+            with urllib.request.urlopen(token_req, timeout=15) as resp:
+                body = json.load(resp)
+            cache[token_key] = headers["Authorization"] = f"Bearer {body.get('token') or body['access_token']}"
+    raise urllib.error.URLError("authentication refused")
+
+
+def registry_host(registry):
+    return "registry-1.docker.io" if registry == "docker.io" else registry
+
+
 def registry_digest(registry, repo, tag, auth, cache):
-    """Current digest of `tag` in the registry (HEAD on the manifest), with an anonymous or configured token."""
+    """Current digest of `tag` in the registry (HEAD on the manifest)."""
     key = (registry, repo, tag)
     if key in cache:
         return cache[key]
-    host = "registry-1.docker.io" if registry == "docker.io" else registry
-    url = f"https://{host}/v2/{repo}/manifests/{tag}"
-    headers = {"Accept": MANIFEST_ACCEPT, "User-Agent": USER_AGENT}
-    digest = None
+    url = f"https://{registry_host(registry)}/v2/{repo}/manifests/{tag}"
     try:
-        for _ in range(2):
-            req = urllib.request.Request(url, headers=headers, method="HEAD")
-            try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    digest = resp.headers.get("Docker-Content-Digest")
-                break
-            except urllib.error.HTTPError as e:
-                challenge = e.headers.get("WWW-Authenticate", "")
-                if e.code != 401 or not challenge.startswith("Bearer ") or "Authorization" in headers:
-                    break
-                params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
-                token_req = urllib.request.Request(
-                    f"{params['realm']}?service={params.get('service', '')}&scope=repository:{repo}:pull",
-                    headers={"User-Agent": USER_AGENT},
-                )
-                creds = auth.get(registry)
-                if creds:
-                    basic = base64.b64encode(f"{creds['username']}:{creds['token']}".encode()).decode()
-                    token_req.add_header("Authorization", f"Basic {basic}")
-                with urllib.request.urlopen(token_req, timeout=15) as resp:
-                    body = json.load(resp)
-                headers["Authorization"] = f"Bearer {body.get('token') or body['access_token']}"
-    except (urllib.error.URLError, KeyError, ValueError, TimeoutError):
+        headers, _ = registry_request(registry, repo, url, auth, cache, method="HEAD", accept=MANIFEST_ACCEPT)
+        digest = headers.get("Docker-Content-Digest")
+    except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
         digest = None
     cache[key] = digest
     return digest
 
 
-def docker_status(ctid, auth, cache):
-    """For every image running in the LXC, compare its local digest with the registry's."""
+def registry_tags(registry, repo, auth, cache):
+    """Every tag of a repository (following the pagination); None if the registry does not list them."""
+    key = ("tags", registry, repo)
+    if key in cache:
+        return cache[key]
+    host = registry_host(registry)
+    url, tags = f"https://{host}/v2/{repo}/tags/list?n=1000", []
+    try:
+        for _ in range(TAG_PAGES):
+            headers, body = registry_request(registry, repo, url, auth, cache, accept="application/json")
+            tags += json.loads(body or b"{}").get("tags") or []
+            link = re.search(r'<([^>]+)>\s*;\s*rel="?next"?', headers.get("Link", ""))
+            if not link:
+                break
+            url = urllib.parse.urljoin(f"https://{host}/", link.group(1))
+    except (urllib.error.URLError, KeyError, ValueError, TimeoutError, OSError):
+        tags = None
+    cache[key] = tags
+    return tags
+
+
+VERSION_TAG = re.compile(r"^([A-Za-z_-]*?)(\d+(?:\.\d+)*)(.*)$")
+
+
+def newer_tag(tag, tags):
+    """Highest tag of the same shape as `tag` and newer than it: '1.2.1' -> '1.2.2' (same prefix such as 'v', same
+    number of components, same suffix such as '-alpine'); None for a mobile tag such as 'latest'."""
+    match = VERSION_TAG.match(tag)
+    if not match:
+        return None
+    prefix, numbers, suffix = match.groups()
+    best, best_key = None, tuple(int(n) for n in numbers.split("."))
+    for candidate in tags or []:
+        m = VERSION_TAG.match(candidate)
+        if not m or m.group(1) != prefix or m.group(3) != suffix:
+            continue
+        parts = m.group(2).split(".")
+        if len(parts) != len(best_key) or any(len(p) > 1 and p.startswith("0") for p in parts):
+            continue
+        key = tuple(int(n) for n in parts)
+        if key > best_key:
+            best, best_key = candidate, key
+    return best
+
+
+def docker_status(ctid, auth, cache, new_tags=True):
+    """For every image running in the LXC: compare its local digest with the registry's (same tag rebuilt) and, with
+    new_tags, look for a newer tag of the same shape (a new version published under a new tag).
+
+    new_tags is off for a container installed by a community-scripts helper script: its `update` command decides
+    which image version to run, a newer tag it does not support yet is not an update."""
     _, out = pct_exec(ctid, DOCKER_LIST_SCRIPT, timeout=60)
     images = []
     for line in out.splitlines():
-        image, _, digests_json = line.partition("\t")
+        image, _, rest = line.partition("\t")
+        digests_json, _, version = rest.partition("\t")
         parsed = parse_image(image)
         entry = {"image": image}
+        version = version.strip()
+        if version and version != "<no value>":
+            entry["version"] = version
         try:
             digests = json.loads(digests_json or "[]")
         except ValueError:
@@ -448,6 +520,10 @@ def docker_status(ctid, auth, cache):
                 entry["error"] = "registry_unreachable"
             else:
                 entry["update"] = local != remote
+            if new_tags and VERSION_TAG.match(tag):
+                latest = newer_tag(tag, registry_tags(registry, repo, auth, cache))
+                if latest:
+                    entry["latest_tag"] = latest
         images.append(entry)
     return images
 
@@ -623,7 +699,7 @@ def collect_one(entry, config, cache, progress=None):
     report_step(progress, ctid, "app", "done", {"app": ct["app"]} if "app" in ct else None)
 
     report_step(progress, ctid, "docker", "running")
-    docker = docker_status(ctid, config.get("registry_auth", {}), cache)
+    docker = docker_status(ctid, config.get("registry_auth", {}), cache, not ct["helper_script"])
     if docker:
         ct["docker"] = docker
     report_step(progress, ctid, "docker", "done", {"docker": docker} if docker else None)

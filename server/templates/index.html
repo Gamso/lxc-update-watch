@@ -121,13 +121,16 @@
 <details class="row" data-ctid="{{ r.ctid }}">
 <summary class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
 <span class="sys-cell"><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
-<span class="badges app-cell">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></summary>
+<span class="badges app-cell">{% for text, kind, title in r.app_badges %}<span class="b {{ kind }}" title="{{ title }}">{{ text }}</span>{% endfor %}</span></summary>
 <div class="detail">
 {% for p in r.packages[:15] %}{{ p }}<br>{% endfor %}
 {% if r.packages|length > 15 %}{{ t('d_more', n=r.packages|length - 15) }}<br>{% endif %}
-{% if r.docker_pending %}<br>{{ t('d_docker_newer') }}<br>
-{% for i in r.docker_pending %}{{ i.image }}<br>{% endfor %}
+{% if r.docker_rebuilt %}<br>{{ t('d_docker_newer') }}<br>
+{% for i in r.docker_rebuilt %}{{ i.image }}<br>{% endfor %}
 {{ t('d_docker_update')|safe }}<br>{% endif %}
+{% if r.docker_newer %}<br>{{ t('d_docker_new_tag') }}<br>
+{% for i in r.docker_newer %}{{ i.image }} → {{ i.latest_tag }}<br>{% endfor %}
+{{ t('d_docker_new_tag_how')|safe }}<br>{% endif %}
 {% if r.docker_unchecked %}<br>{{ t('d_unchecked') }}<br>{% for i in r.docker_unchecked %}{{ i.image }} ({{ i.error }})<br>{% endfor %}{% endif %}
 {% if r.app_pending and r.app.source %}<br>{{ t('d_target', name=r.app.name, latest=r.app.latest, source=r.app.source) }}{% endif %}
 {% if r.app_pending and r.app.components and r.app.components|length > 1 %}<br>{{ t('d_components') }} {% for c in r.app.components %}{{ c.name }} {{ c.installed }}{% if c.update %} → {{ c.latest }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
@@ -142,7 +145,7 @@
 {% for r in view.others %}
 <div class="row quiet" data-ctid="{{ r.ctid }}"><div class="line"><span>{{ r.ctid }}</span><span class="name">{{ r.name }}</span>
 <span class="sys-cell"><span class="b {{ r.sys_kind }}">{{ r.sys_text }}</span></span>
-<span class="badges app-cell">{% for text, kind in r.app_badges %}<span class="b {{ kind }}" title="{{ text }}">{{ text }}</span>{% endfor %}</span></div></div>
+<span class="badges app-cell">{% for text, kind, title in r.app_badges %}<span class="b {{ kind }}" title="{{ title }}">{{ text }}</span>{% endfor %}</span></div></div>
 {% endfor %}
 {% endif %}
 {% endif %}

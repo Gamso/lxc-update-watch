@@ -204,9 +204,10 @@ def job_is_active(job):
 
 
 def docker_updatable_containers(state):
-    """Running containers with at least one Docker image (not built locally) that has a newer version."""
+    """Running containers with at least one Docker image whose tag points to a newer image: what `docker compose pull`
+    brings. A newer tag needs the compose file changed first, so it does not count here."""
     return [ct for ct in state["containers"]
-            if ct["status"] == "running" and pending_flags(ct)[2]]
+            if ct["status"] == "running" and any(i.get("update") for i in remote_images(ct))]
 
 
 def app_updatable_containers(state):
@@ -255,10 +256,42 @@ def system_badge(ct, tr):
     return tr.plural("b_packages", n), "w"
 
 
+def remote_images(ct):
+    """The Docker images of a container that come from a registry (not built locally)."""
+    return [i for i in ct.get("docker") or [] if not i.get("local")]
+
+
 def pending_flags(ct):
-    """(system packages pending, application update pending, Docker images with an update) of a container."""
-    images = [i for i in ct.get("docker") or [] if not i.get("local")]
-    return (ct.get("os_updates") or 0) > 0, bool((ct.get("app") or {}).get("update")), [i for i in images if i.get("update")]
+    """(system packages pending, application update pending, Docker images with an update or a newer tag)."""
+    docker = [i for i in remote_images(ct) if i.get("update") or i.get("latest_tag")]
+    return (ct.get("os_updates") or 0) > 0, bool((ct.get("app") or {}).get("update")), docker
+
+
+def image_label(image):
+    """'ghcr.io/o/app:1.2.1' -> 'app 1.2.1'; a mobile tag ('latest') shows the version label of the image if any."""
+    name, tag = image["image"].split("@", 1)[0], "latest"
+    if ":" in name.rsplit("/", 1)[-1]:
+        name, tag = name.rsplit(":", 1)
+    short = name.rsplit("/", 1)[-1]
+    version = image.get("version")
+    if version and not any(ch.isdigit() for ch in tag):
+        return f"{short} {version}"
+    return f"{short} {tag}"
+
+
+def image_badge(image, tr):
+    """(text, kind, title) of one Docker image of the application column; the title is the full image name."""
+    label = image_label(image)
+    if image.get("local"):
+        return tr("b_image_local", image=label), "n", image["image"]
+    if image.get("latest_tag"):
+        return f"{label} → {image['latest_tag']}", "w", image["image"]
+    if image.get("update"):
+        return tr("b_image_new", image=label), "w", image["image"]
+    if "error" in image:
+        error = tr.error(image["error"])
+        return tr("b_app_error", name=label, error=error), "n", f"{image['image']}: {error}"
+    return label, "s", image["image"]
 
 
 def app_badges(ct, tr, final=True):
@@ -269,30 +302,21 @@ def app_badges(ct, tr, final=True):
     if ct["status"] != "running":
         return []
     if ct.get("error"):   # the collector could not check this container at all
-        return [(tr("b_check_failed"), "n")]
+        return [(tr("b_check_failed"), "n", tr("b_check_failed"))]
     badges = []
     app_info = ct.get("app")
     if app_info:
         if "error" in app_info:
-            badges.append((tr("b_app_error", name=app_info["name"], error=tr.error(app_info["error"])), "n"))
+            text, kind = tr("b_app_error", name=app_info["name"], error=tr.error(app_info["error"])), "n"
         elif app_info["update"]:
-            badges.append((f"{app_info['name']} {app_info['installed']} → {app_info['latest']}", "w"))
+            text, kind = f"{app_info['name']} {app_info['installed']} → {app_info['latest']}", "w"
         else:
-            badges.append((f"{app_info['name']} {app_info['installed']}", "s"))
-    all_images = ct.get("docker") or []
-    images = [i for i in all_images if not i.get("local")]
-    if all_images and not images:
-        badges.append((tr("b_docker_local"), "n"))
-    if images:
-        outdated = [i for i in images if i.get("update")]
-        unchecked = [i for i in images if "error" in i]
-        if outdated:
-            badges.append((tr.plural("b_docker_outdated", len(outdated), total=len(images)), "w"))
-        elif unchecked:
-            badges.append((tr.plural("b_docker_unchecked", len(unchecked), total=len(images)), "n"))
-        else:
-            badges.append((tr.plural("b_docker_ok", len(images)), "s"))
-    return badges or ([(tr("b_app_untracked"), "n")] if final else [])
+            text, kind = f"{app_info['name']} {app_info['installed']}", "s"
+        badges.append((text, kind, text))
+    badges += [image_badge(i, tr) for i in ct.get("docker") or []]
+    if not badges and final:
+        badges.append((tr("b_app_untracked"), "n", tr("b_app_untracked")))
+    return badges
 
 
 HOST_PACKAGES_SHOWN = 15
@@ -326,7 +350,7 @@ def build_view(state, tr):
     rows = []
     for ct in state["containers"]:
         app_info = ct.get("app") or {}
-        images = [i for i in ct.get("docker") or [] if not i.get("local")]
+        images = remote_images(ct)
         sys_text, sys_kind = system_badge(ct, tr)
         sys_pending, app_pending, docker_pending = pending_flags(ct)
         rows.append({
@@ -337,6 +361,8 @@ def build_view(state, tr):
             "pending": sys_pending or app_pending or bool(docker_pending),
             "sys_pending": sys_pending, "app_pending": app_pending,
             "docker_pending": docker_pending,
+            "docker_rebuilt": [i for i in docker_pending if i.get("update")],
+            "docker_newer": [i for i in docker_pending if i.get("latest_tag")],
             "docker_unchecked": [{"image": i["image"], "error": tr.error(i["error"])} for i in images if "error" in i],
             "update_cmd": app_info.get("update_cmd") or ("update" if ct.get("helper_script") else None),
         })
@@ -589,8 +615,8 @@ def api_progress_get():
                 text, kind = system_badge(ct, tr)
                 item["sys"] = {"text": text, "kind": kind}
             if steps["app"] == "done":
-                item["apps"] = [{"text": text, "kind": kind}
-                                for text, kind in app_badges(ct, tr, final=steps["docker"] == "done")]
+                item["apps"] = [{"text": text, "kind": kind, "title": title}
+                                for text, kind, title in app_badges(ct, tr, final=steps["docker"] == "done")]
             if finished:
                 sys_pending, app_pending, docker_pending = pending_flags(ct)
                 item["pending"] = bool(sys_pending or app_pending or docker_pending)
