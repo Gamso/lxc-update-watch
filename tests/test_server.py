@@ -28,7 +28,7 @@ def test_the_first_check_can_be_asked_from_the_page(web):
     page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
     assert 'id="refresh"' in page and "Check now" in page and "app.js" in page
     assert '"lastCheck": null' in page and '"refreshing": false' in page
-    assert web.post("/api/refresh").status_code == 202
+    assert web.post("/api/refresh", json={}).status_code == 202
     assert '"refreshing": true' in web.get("/").get_data(as_text=True)   # the page keeps waiting after a reload
 
 
@@ -101,7 +101,7 @@ def test_pending_rows_come_first_with_details(web, token_headers, sample_report)
 # ---------------------------------------------------------------- refresh requests
 
 def test_refresh_request_lifecycle(web, token_headers, sample_report):
-    assert web.post("/api/refresh").status_code == 202
+    assert web.post("/api/refresh", json={}).status_code == 202
     assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
     assert web.get("/api/refresh/pending").status_code == 401
     post_report(web, token_headers, {**sample_report, "started_at": "2999-01-01T00:00:00+00:00"})
@@ -109,7 +109,7 @@ def test_refresh_request_lifecycle(web, token_headers, sample_report):
 
 
 def test_a_request_made_during_a_collection_stays_pending(web, token_headers, sample_report):
-    web.post("/api/refresh")
+    web.post("/api/refresh", json={})
     post_report(web, token_headers, {**sample_report, "started_at": "2000-01-01T00:00:00+00:00"})
     assert web.get("/api/jobs/pending", headers=token_headers).get_json()["refresh"] is True
 
@@ -607,6 +607,40 @@ def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report
     assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"
 
 
+def test_a_form_on_another_site_cannot_start_a_check(web):
+    assert web.post("/api/refresh", data="x=1", content_type="application/x-www-form-urlencoded").status_code == 400
+    assert web.post("/api/refresh", data="").status_code == 400
+    assert web.get("/api/status").get_json()["refreshing"] is False
+    assert web.post("/api/refresh", json={}).status_code == 202
+def test_the_page_cannot_be_framed_by_another_site(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    for path in ("/", "/api/status", "/healthz"):
+        headers = web.get(path).headers
+        assert headers["X-Frame-Options"] == "DENY" and "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+        assert headers["X-Content-Type-Options"] == "nosniff"
+def test_a_long_job_that_keeps_writing_stays_active(web, token_headers, sample_report):
+    import os
+    import time
+
+    import app as web_app
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    stored = json.loads(web_app.JOB_FILE.read_text(encoding="utf-8"))
+    four_hours_ago = "2000-01-01T00:00:00+00:00"
+    stored.update(requested_at=four_hours_ago, started_at=four_hours_ago)
+    web_app.JOB_FILE.write_text(json.dumps(stored), encoding="utf-8")
+    web.post(f"/api/jobs/{job['id']}/log", json={"text": "still backing up\n"}, headers=token_headers)
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 409   # output just arrived
+    old = time.time() - 4 * 3600
+    os.utime(web_app.LOG_FILE, (old, old))
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202   # silent for 4 hours
+def test_a_container_the_collector_could_not_check_says_so(web, token_headers, sample_report):
+    sample_report["containers"][0].update(error="check_failed: boom", os_updates=None)
+    sample_report["containers"][0].pop("app", None)
+    post_report(web, token_headers, sample_report)
+    page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert "Check failed" in page
 def test_the_check_time_is_marked_for_the_browser_time_zone(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
