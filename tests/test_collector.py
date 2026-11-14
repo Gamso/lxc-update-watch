@@ -530,6 +530,30 @@ def test_run_job_dispatches_a_chain(monkeypatch):
     assert calls == [["upgrade_os", "update_docker"]]
 
 
+def test_the_result_of_a_job_is_retried(monkeypatch):
+    attempts = []
+
+    def flaky(config, method, path, body=None, timeout=15):
+        attempts.append(path)
+        if len(attempts) < 3:
+            raise c.urllib.error.URLError("down")
+        return {}
+
+    monkeypatch.setattr(c, "server_call", flaky)
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    assert c.send_result({}, "j", []) is True and len(attempts) == 3
+
+
+def test_a_result_that_cannot_be_delivered_is_not_a_crash(monkeypatch, capsys):
+    def down(*a, **k):
+        raise c.urllib.error.URLError("down")
+
+    monkeypatch.setattr(c, "server_call", down)
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    assert c.send_result({}, "j", []) is False
+    assert "Could not send the result of job j" in capsys.readouterr().err
+
+
 def test_every_request_to_the_service_announces_the_collector_version(monkeypatch):
     seen = []
 
