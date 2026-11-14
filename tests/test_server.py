@@ -150,7 +150,6 @@ def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     pending = web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]
     assert pending["id"] == job["id"]
     assert web.post(f"/api/jobs/{job['id']}/start", headers=token_headers).status_code == 200
-    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"] is None  # already started
 
     log_url = f"/api/jobs/{job['id']}/log"
     web.post(log_url, json={"text": "[CT 100] \x1b[32m[OK]\x1b[0m start\n"}, headers=token_headers)
@@ -166,6 +165,27 @@ def test_full_job_cycle_with_live_log(web, token_headers, sample_report):
     assert "Application update (with backup)" in page and "finished with errors" in page and "boom" in page
     assert web.get("/api/status").get_json()["job"] == "done"
     assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
+
+
+def test_a_job_abandoned_by_the_collector_is_closed_at_its_next_poll(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    web.get("/api/jobs/pending", headers=token_headers)
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 409
+    # The collector was killed: the result never came. Its next poll means nothing is running any more.
+    assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"] is None
+    status = web.get("/api/status").get_json()
+    assert status["job"] == "done" and status["job_id"] == job["id"]
+    assert "interrupted" in web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202
+
+
+def test_a_pending_job_is_left_alone_by_the_poll(web, token_headers, sample_report):
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    for _ in range(2):
+        assert web.get("/api/jobs/pending", headers=token_headers).get_json()["job"]["id"] == job["id"]
 
 
 def test_log_is_capped(web, token_headers, sample_report, monkeypatch):

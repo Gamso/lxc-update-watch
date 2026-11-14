@@ -614,11 +614,25 @@ def api_job_dismiss():
     return jsonify(ok=True)
 
 
+INTERRUPTED_MESSAGE = "interrupted: the collector stopped before sending the result (see its journal)"
+
+
+def close_orphaned_job(job):
+    """The collector polls only between two runs (its systemd units share a lock): a job still marked running at
+    that point was abandoned (collector killed, host rebooted, result lost on the network). Close it, so that the
+    page stops waiting and new actions are accepted again."""
+    if job and job["status"] == "running":
+        job.update(status="done", ok=False, finished_at=now_iso(),
+                   results=job.get("results") or [{"label": job["action"], "ok": False, "message": INTERRUPTED_MESSAGE}])
+        write_json(JOB_FILE, job)
+    return job
+
+
 @app.get("/api/jobs/pending")
 def api_jobs_pending():
     require_token()
     note_collector()
-    job = load_job()
+    job = close_orphaned_job(load_job())
     return jsonify(refresh=refresh_requested_at() is not None,
                    job=job if job and job["status"] == "pending" and job_is_active(job) else None)
 

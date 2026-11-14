@@ -1061,7 +1061,24 @@ def run_job(config, job):
     failed = sum(1 for r in results if not r["ok"])
     shipper.write(f"\n== Done: {len(results) - failed} succeeded, {failed} failed ==\n")
     shipper.close()
-    server_call(config, "POST", f"/api/jobs/{job['id']}/result", {"results": results}, timeout=30)
+    send_result(config, job["id"], results)
+
+
+RESULT_RETRY_DELAYS = (5, 15, 30, 60)
+
+
+def send_result(config, job_id, results):
+    """Deliver the results of a job, retrying for about two minutes: without them the page would wait until the
+    service gives up on the job."""
+    for delay in RESULT_RETRY_DELAYS + (None,):
+        try:
+            server_call(config, "POST", f"/api/jobs/{job_id}/result", {"results": results}, timeout=30)
+            return True
+        except (OSError, ValueError) as e:
+            if delay is None:
+                print(f"Could not send the result of job {job_id}: {e}", file=sys.stderr)
+                return False
+            time.sleep(delay)
 
 
 # ---------------------------------------------------------------- entry point
