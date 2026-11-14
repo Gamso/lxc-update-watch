@@ -594,7 +594,14 @@ def finish(shipper, ctid, ok, note=""):
 
 
 class LogShipper:
-    """Sends the output of the commands to the web page in batches (once a second) without ever blocking the job."""
+    """Sends the output of the commands to the web page in batches (once a second) without ever blocking the job.
+
+    While the service is unreachable the output waits in memory, up to MAX_PENDING_CHARS (the service keeps no more
+    than about that much anyway): beyond it the oldest waiting output is dropped. A job the service no longer knows
+    (cleared, replaced) gets nothing more."""
+
+    MAX_PENDING_CHARS = 1_000_000
+    DROPPED = "\n[console output dropped while the web service was unreachable]\n"
 
     def __init__(self, config, job_id):
         self.config, self.job_id = config, job_id
@@ -615,9 +622,20 @@ class LogShipper:
             return
         try:
             server_call(self.config, "POST", f"/api/jobs/{self.job_id}/log", {"text": text}, timeout=10)
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                return  # unknown job or refused: sending it again would never work
+            self._requeue(text)
         except (urllib.error.URLError, ValueError, TimeoutError, OSError):
-            with self.lock:
-                self.pending.insert(0, text)  # retried on the next pass
+            self._requeue(text)
+
+    def _requeue(self, text):
+        """Put back output that could not be sent, for the next pass, within MAX_PENDING_CHARS."""
+        with self.lock:
+            text = "".join([text] + self.pending)
+            if len(text) > self.MAX_PENDING_CHARS:
+                text = self.DROPPED + text[-(self.MAX_PENDING_CHARS - len(self.DROPPED)):]
+            self.pending = [text]
 
     def _loop(self):
         while not self.stop.wait(1.0):

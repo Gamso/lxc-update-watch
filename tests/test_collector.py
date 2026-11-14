@@ -546,3 +546,49 @@ def test_every_request_to_the_service_announces_the_collector_version(monkeypatc
     monkeypatch.setattr(c.urllib.request, "urlopen", lambda req, timeout=None: seen.append(dict(req.header_items())) or Reply())
     c.server_call({"server_url": "http://x", "token": "t"}, "GET", "/api/jobs/pending")
     assert seen[0]["X-collector-version"] == c.VERSION and seen[0]["Authorization"] == "Bearer t"
+
+
+# ---------------------------------------------------------------- console output of the jobs
+
+def log_shipper(monkeypatch, outcome):
+    sent = []
+
+    def fake_call(config, method, path, body=None, timeout=15):
+        if outcome:
+            raise outcome[0]
+        sent.append(body["text"])
+
+    monkeypatch.setattr(c, "server_call", fake_call)
+    shipper = c.LogShipper({}, "j")
+    shipper.stop.set()            # no background flush: the test drives it
+    shipper.thread.join()
+    return shipper, sent
+
+
+def test_log_shipper_keeps_the_output_while_the_service_is_down(monkeypatch):
+    outcome = [OSError("down")]
+    shipper, sent = log_shipper(monkeypatch, outcome)
+    shipper.write("one\n")
+    shipper._flush()
+    shipper.write("two\n")
+    outcome.clear()
+    shipper._flush()
+    assert sent == ["one\ntwo\n"]
+
+
+def test_log_shipper_memory_is_bounded(monkeypatch):
+    shipper, _ = log_shipper(monkeypatch, [OSError("down")])
+    monkeypatch.setattr(c.LogShipper, "MAX_PENDING_CHARS", 200)
+    for i in range(50):
+        shipper.write(f"line {i:03}\n")
+        shipper._flush()
+    waiting = "".join(shipper.pending)
+    assert len(waiting) <= 200 and "dropped" in waiting and waiting.endswith("line 049\n")
+
+
+def test_log_shipper_drops_output_of_a_job_the_service_forgot(monkeypatch):
+    gone = c.urllib.error.HTTPError("http://x", 404, "unknown job", {}, None)
+    shipper, _ = log_shipper(monkeypatch, [gone])
+    shipper.write("late\n")
+    shipper._flush()
+    assert shipper.pending == []
