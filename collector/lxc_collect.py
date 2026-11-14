@@ -165,11 +165,29 @@ def parse_version(text, pattern=None):
     return (m.group(1) if m.groups() else m.group(0)).lstrip("v")
 
 
+PRE_TAG_RE = re.compile(r"alpha|beta|rc|pre|dev|nightly|snapshot", re.IGNORECASE)
+
+
 def version_key(version):
-    try:
-        return tuple(int(x) for x in re.split(r"[.-]", version.split("+")[0]) if x.isdigit())
-    except ValueError:
+    """Sortable key of a version, () when there is no number to compare.
+
+    1.2 and 1.2.0 are the same version; a pre-release (2.0.0-rc1) comes before its release (2.0.0); a packaging
+    revision (1.2.3-2) comes after 1.2.3-1."""
+    m = re.match(r"v?(\d+(?:\.\d+)*)(.*)", (version or "").split("+")[0])
+    if not m:
         return ()
+    numbers = [int(x) for x in m.group(1).split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    rest = m.group(2)
+    stage = 0 if PRE_TAG_RE.search(rest) else 1
+    return tuple(numbers), stage, tuple(int(x) for x in re.findall(r"\d+", rest))
+
+
+def is_newer(latest, installed):
+    """True when `latest` is a newer version than `installed` (plain inequality when they cannot be compared)."""
+    a, b = version_key(installed), version_key(latest)
+    return b > a if a and b else installed != latest
 
 
 def strip_v(version):
@@ -299,9 +317,8 @@ def app_status(ctid, app_cfg, github_token, cache):
     latest = parse_version(tag, app_cfg.get("version_regex")) if tag else None
     if not latest:
         return {"name": name, "installed": installed, "error": unavailable("latest_version_unavailable")}
-    a, b = version_key(installed), version_key(latest)
-    update = b > a if a and b else installed != latest
-    result = {"name": name, "installed": installed, "latest": latest, "update": update, "source": source}
+    result = {"name": name, "installed": installed, "latest": latest, "update": is_newer(latest, installed),
+              "source": source}
     if app_cfg.get("update_cmd"):
         result["update_cmd"] = app_cfg["update_cmd"]
     return result
@@ -333,10 +350,14 @@ MANIFEST_ACCEPT = ", ".join([
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ])
+# One line per running image: <name it was started from>\t<RepoDigests of the image the container really runs>.
+# `docker ps --format {{.Image}}` is not enough: once the tag has been pulled again (a newer image downloaded but the
+# container not recreated), it prints the bare image ID, and the running image could no longer be compared.
 DOCKER_LIST_SCRIPT = (
     "command -v docker >/dev/null 2>&1 || exit 0; "
-    "docker ps --format '{{.Image}}' 2>/dev/null | sort -u | while read -r img; do "
-    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$img\" 2>/dev/null || echo '[]'; "
+    "for id in $(docker ps -q 2>/dev/null); do docker inspect -f '{{.Config.Image}}|{{.Image}}' \"$id\"; done "
+    "| sort -u | while IFS='|' read -r img imgid; do "
+    "printf '%s\\t' \"$img\"; docker image inspect -f '{{json .RepoDigests}}' \"$imgid\" 2>/dev/null || echo '[]'; "
     "done"
 )
 
@@ -511,7 +532,7 @@ def auto_app_status(ctid, name, config, cache):
             tag = release_target(comp, token)
             target = strip_v(tag) if tag else None
             found.append({"name": comp["name"], "installed": current, "latest": target,
-                          "update": bool(target) and current != target,
+                          "update": bool(target) and is_newer(target, current),
                           "error": None if target else unavailable("target_version_unavailable")})
         if not found:
             continue  # the host name looks like this script but nothing from it is installed here
@@ -605,6 +626,20 @@ def collect_one(entry, config, cache, progress=None):
     return ct
 
 
+def safe_collect_one(entry, config, cache, progress=None):
+    """collect_one, but a bug or an unexpected reply in one container (a bad version_regex in the config, an odd
+    output...) only marks that container as failed: the others are still checked and the report is still sent."""
+    try:
+        return collect_one(entry, config, cache, progress)
+    except Exception as e:
+        ctid, status, name = entry
+        print(f"CT {ctid}: check failed: {e!r}", file=sys.stderr)
+        for step in ("system", "app", "docker"):
+            report_step(progress, ctid, step, "done")  # the live view must not wait for this container forever
+        return {"ctid": int(ctid), "name": name, "status": status, "os_updates": None,
+                "error": f"check_failed: {e}"[:200]}
+
+
 # ---------------------------------------------------------------- jobs requested from the web page
 
 UPGRADE_SCRIPT = (
@@ -638,7 +673,14 @@ def finish(shipper, ctid, ok, note=""):
 
 
 class LogShipper:
-    """Sends the output of the commands to the web page in batches (once a second) without ever blocking the job."""
+    """Sends the output of the commands to the web page in batches (once a second) without ever blocking the job.
+
+    While the service is unreachable the output waits in memory, up to MAX_PENDING_CHARS (the service keeps no more
+    than about that much anyway): beyond it the oldest waiting output is dropped. A job the service no longer knows
+    (cleared, replaced) gets nothing more."""
+
+    MAX_PENDING_CHARS = 1_000_000
+    DROPPED = "\n[console output dropped while the web service was unreachable]\n"
 
     def __init__(self, config, job_id):
         self.config, self.job_id = config, job_id
@@ -659,9 +701,20 @@ class LogShipper:
             return
         try:
             server_call(self.config, "POST", f"/api/jobs/{self.job_id}/log", {"text": text}, timeout=10)
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                return  # unknown job or refused: sending it again would never work
+            self._requeue(text)
         except (urllib.error.URLError, ValueError, TimeoutError, OSError):
-            with self.lock:
-                self.pending.insert(0, text)  # retried on the next pass
+            self._requeue(text)
+
+    def _requeue(self, text):
+        """Put back output that could not be sent, for the next pass, within MAX_PENDING_CHARS."""
+        with self.lock:
+            text = "".join([text] + self.pending)
+            if len(text) > self.MAX_PENDING_CHARS:
+                text = self.DROPPED + text[-(self.MAX_PENDING_CHARS - len(self.DROPPED)):]
+            self.pending = [text]
 
     def _loop(self):
         while not self.stop.wait(1.0):
@@ -743,9 +796,24 @@ def upgrade_containers(ctids, config, shipper, backup=False):
                   f"{', backing up first' if backup else ', no backup'}\n")
     for ctid in skipped:
         finish(shipper, ctid, False, "container stopped or not found")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(lambda t: upgrade_one(*t, shipper, storage if backup else None), todo))
+    results += map_containers(lambda t: upgrade_one(*t, shipper, storage if backup else None), todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
+
+
+def map_containers(fn, todo, workers, shipper):
+    """Run fn((ctid, name)) for every container, a few at a time. An exception in one container becomes a failed
+    result for that container alone: the results of the others are kept."""
+    def safe(item):
+        ctid, name = item
+        try:
+            return fn(item)
+        except Exception as e:
+            message = f"internal error: {e}"[:200]
+            finish(shipper, ctid, False, message)
+            return {"label": f"CT {ctid} {name}", "ok": False, "message": message}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(safe, todo))
 
 
 NO_UPDATE_COMMAND = "stopped, or no update command (container not created by a helper script)"
@@ -802,8 +870,7 @@ def update_apps(job, config, shipper):
         finish(shipper, ctid, ok, note)
         return {"label": f"CT {ctid} {name}", "ok": ok, "message": message}
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(one, todo))
+    results += map_containers(one, todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -924,8 +991,7 @@ def update_docker(job, config, shipper):
     shipper.write(f"Docker stack update of {len(todo)} container(s) ({', '.join(notes)})\n")
     for ctid in [r for r in job["ctids"] if r not in running]:
         finish(shipper, ctid, False, "container stopped or not found")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(lambda item: update_docker_one(*item, job, config, shipper), todo))
+    results += map_containers(lambda item: update_docker_one(*item, job, config, shipper), todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -1043,8 +1109,7 @@ def update_chain(job, config, shipper):
         finish(shipper, ctid, True)
         return {"label": label, "ok": True, "message": "; ".join(done)[:200]}
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results += list(pool.map(one, todo))
+    results += map_containers(one, todo, workers, shipper)
     return sorted(results, key=lambda r: r["label"])
 
 
@@ -1146,7 +1211,7 @@ def main():
     if progress:
         progress.event(type="start", containers=[{"ctid": int(c[0]), "name": c[2], "status": c[1]} for c in to_check])
     with ThreadPoolExecutor(max_workers=4) as pool:
-        containers = list(pool.map(lambda e: collect_one(e, config, cache, progress), to_check))
+        containers = list(pool.map(lambda e: safe_collect_one(e, config, cache, progress), to_check))
     if progress:
         progress.close()  # every event must be delivered before the report ends the live view
     containers.sort(key=lambda c: c["ctid"])
