@@ -607,6 +607,23 @@ def test_the_system_backup_needs_a_storage_too(web, token_headers, sample_report
     assert refused.status_code == 400 and refused.get_json()["code"] == "backup_not_configured"
 
 
+def test_a_long_job_that_keeps_writing_stays_active(web, token_headers, sample_report):
+    import os
+    import time
+
+    import app as web_app
+    post_report(web, token_headers, sample_report)
+    job = web.post("/api/actions", json={"action": "upgrade_os"}).get_json()
+    web.post(f"/api/jobs/{job['id']}/start", headers=token_headers)
+    stored = json.loads(web_app.JOB_FILE.read_text(encoding="utf-8"))
+    four_hours_ago = "2000-01-01T00:00:00+00:00"
+    stored.update(requested_at=four_hours_ago, started_at=four_hours_ago)
+    web_app.JOB_FILE.write_text(json.dumps(stored), encoding="utf-8")
+    web.post(f"/api/jobs/{job['id']}/log", json={"text": "still backing up\n"}, headers=token_headers)
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 409   # output just arrived
+    old = time.time() - 4 * 3600
+    os.utime(web_app.LOG_FILE, (old, old))
+    assert web.post("/api/actions", json={"action": "update_docker"}).status_code == 202   # silent for 4 hours
 def test_the_check_time_is_marked_for_the_browser_time_zone(web, token_headers, sample_report):
     post_report(web, token_headers, sample_report)
     page = web.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
